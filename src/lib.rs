@@ -18,6 +18,7 @@ use peroxide::numerical::spline::CubicSpline;
 use serde::{ Serialize, Serializer };
 use time::{ Date, Month };
 
+pub use crate::error::Error;
 use crate::error::*;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -34,8 +35,7 @@ impl Duration {
         Duration(12 * n)
     }
 
-    /// Return the duration between two dates.
-    fn between(min: MonthlyDate, max: MonthlyDate) -> Self {
+    fn new(min: MonthlyDate, max: MonthlyDate) -> Self {
         Duration(max.as_isize() - min.as_isize())
     }
 
@@ -275,7 +275,7 @@ impl<const N: usize> TimeSeries<N> {
         let first_date = self.0[0].date();
         let second_date = self.0[1].date();
 
-        let duration = Duration::between(first_date, second_date);
+        let duration = Duration::new(first_date, second_date);
         if duration.is_not_positive() {
             return Err(err!(
                 &format!("Expected positive duration between {:?} and {:?}.", first_date, second_date)
