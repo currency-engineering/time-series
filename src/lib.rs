@@ -1,22 +1,26 @@
+//! The `time-series` crate constrains data to an fixed length array of floating point numbers.
+//! Each data point is associated with a date. Dates have the special property that they are
+//! discrete and separated by an interval such as one month.
+
 pub mod error;
+
+use std::{
+    cmp::Ordering,
+    convert::{TryFrom, TryInto},
+    fmt,
+    fs,
+    marker::Copy,
+    ops::{Add, Sub},
+    path::Path,
+};
+    
+use peroxide::numerical::spline::CubicSpline;
+use serde::{ Serialize, Serializer };
+use time::{ Date, Month };
 
 use crate::error::*;
 
-use std::convert::{TryFrom, TryInto};
-use std::fmt;
-use std::fs;
-use std::path::Path;
-
-use std::cmp::Ordering;
-use std::marker::Copy;
-use std::ops::Add;
-use std::ops::Sub;
-
-use peroxide::numerical::spline::CubicSpline;
-use serde::{
-    Serialize,
-    Serializer,
-};
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// A duration between two `Months`.
 ///
@@ -68,7 +72,26 @@ impl MonthlyDate {
     }
 
     /// Return the month of a date.
-    pub fn month(&self) -> usize {
+    pub fn month(&self) -> Month {
+        match self.month_ord() {
+            1 => Month::January,
+            2 => Month::February,
+            3 => Month::March,
+            4 => Month::April,
+            5 => Month::May,
+            6 => Month::June,
+            7 => Month::July,
+            8 => Month::August,
+            9 => Month::September,
+            10 => Month::October,
+            11 => Month::November,
+            12 => Month::December,
+            _ => panic!(),
+        }
+    }
+
+    /// Return a monthly ordinal from 1 to 12.
+    pub fn month_ord(&self) -> usize {
         (self.0 % 12 + 1) as usize
     }
 
@@ -81,6 +104,16 @@ impl MonthlyDate {
     /// Create a monthly date from a year and month.
     pub fn ym(year: isize, month: usize) -> Self {
         MonthlyDate(year * 12 + (month - 1) as isize)
+    }
+}
+
+impl Into<Date> for MonthlyDate {
+    fn into(self) -> Date {
+        Date::from_calendar_date(
+            self.year().try_into().unwrap(),
+            self.month(),
+            1,
+        ).unwrap()
     }
 }
 
@@ -101,7 +134,7 @@ impl PartialEq for MonthlyDate {
 }
 
 impl Serialize for MonthlyDate {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, <S as Serializer>::Error>
     where
         S: Serializer,
     {
@@ -175,44 +208,49 @@ impl<const N: usize> TimeSeries<N> {
     }
 
     /// From CSV file with format '2017-01-01, 4.725'.
-    pub fn from_csv(path: &Path) -> Result<TimeSeries<1>, Error> {
+    pub fn from_csv(path: &Path) -> Result<TimeSeries<1>> {
 
         let s = fs::read_to_string(path)
-            .map_err(|_| read_file_error(file!(), line!(), &path))?;
+            .map_err(|_| err!(
+                &format!("Failed to read file [{}].", path.to_path_buf().to_str().unwrap())
+            ))?;
 
         let mut v: Vec<DatePoint<1>> = Vec::new();
         for (i, line) in s.lines().enumerate() {
 
             let year = line[..4].parse()
                 .map_err(|_| {
-                    parse_csv_date_failed(
-                        file!(),
-                        line!(),
-                        path,
-                        i + 1,
-                        line
+                    err!(
+                        &format!(
+                            "Line {:?} file {}. Failed to parse value on line [{}].",
+                            path.to_path_buf(),
+                            i + 1,
+                            String::from(line)
+                        )
                     )
                 })?;
 
             let month = line[5..7].parse()
                 .map_err(|_| {
-                    parse_csv_date_failed(
-                        file!(),
-                        line!(),
-                        path,
-                        i + 1,
-                        line
+                    err!(
+                        &format!(
+                            "Line {:?} file {}. Failed to parse value on line [{}].",
+                            path.to_path_buf(),
+                            i + 1,
+                            String::from(line)
+                        )
                     )
                 })?;
 
             let value = line[12..].parse::<f32>()
                 .map_err(|_| {
-                    parse_csv_value_failed(
-                        file!(),
-                        line!(),
-                        path,
-                        i + 1,
-                        line
+                    err!(
+                        &format!(
+                            "Line {:?} file {}. Failed to parse value on line [{}].",
+                            path.to_path_buf(),
+                            i + 1,
+                            String::from(line)
+                        )
                     )
                 })?;
 
@@ -228,24 +266,20 @@ impl<const N: usize> TimeSeries<N> {
     }
 
     /// Return the duration between the first and second points.
-    pub fn first_duration(&self) -> Result<Duration, Error> {
+    pub fn first_duration(&self) -> Result<Duration> {
 
-        if self.0.is_empty() { return Err(time_series_is_empty(file!(), line!())) };
-        if self.0.len() == 1 { return Err(time_series_has_only_one_point(file!(), line!())) };
+        if self.0.is_empty() { return Err(err!("Time-series is empty.")) }
+
+        if self.0.len() == 1 { return Err(err!("Time-series has only one point.")) }
 
         let first_date = self.0[0].date();
         let second_date = self.0[1].date();
 
         let duration = Duration::between(first_date, second_date);
         if duration.is_not_positive() {
-            return Err(
-                expected_positive_duration(
-                    file!(),
-                    line!(),
-                    &format!("{}-{:02}-01", first_date.year(), first_date.month()),
-                    &format!("{}-{:02}-01", second_date.year(), second_date.month()),
-                )     
-            )
+            return Err(err!(
+                &format!("Expected positive duration between {:?} and {:?}.", first_date, second_date)
+            ))
         };
         Ok(duration)
     }
@@ -351,18 +385,18 @@ impl RegularTimeSeries::<1> {
     /// Consume two `RegularTimeSeries<1>` and return a `RegularTimeSeries<2>` over a tuple of the
     /// original values. If the duration of the two time-series' are different then panic. If the
     /// result has less than two data points then fail.
-    pub fn zip_one_one(self, other: RegularTimeSeries<1>) -> Result<RegularTimeSeries<2>, Error> {
+    pub fn zip_one_one(self, other: RegularTimeSeries<1>) -> Result<RegularTimeSeries<2>> {
        
         // Each TimeSeries is a Vec of DatePoints. We can therefore just do the checks and use a
         // consuming iterator over all the DatePoints.
 
         if self.duration() != other.duration() {
-            return Err(expected_same_durations(
-                file!(),
-                line!(),
-                &self.duration().to_string(),
-                &other.duration().to_string(),
-            ));
+            return Err(err!(
+                &format!("Expected time-series to have same duration but had [{}] and [{}].",
+                    self.duration(),
+                    other.duration(),
+                )
+            ))
         };
 
         // Find first and last dates, then create iterators with this date range and zip.
@@ -456,26 +490,14 @@ fn test_with_range() {
 impl<const N: usize> RegularTimeSeries<N> {
 
     /// Return the datapoint for the given date or error if that date is not in `Self`.
-    pub fn datepoint_from_date(&self, date: MonthlyDate) -> Result<DatePoint::<N>, Error> {
+    pub fn datepoint_from_date(&self, date: MonthlyDate) -> Result<DatePoint::<N>> {
 
         if date < self.first_date() || date > self.last_date() { 
-            return Err(
-                date_not_in_timeseries(
-                    file!(),
-                    line!(),
-                    &format!( "{}-{:02}-01", date.year(), date.month()),
-                )
-            )
+            return Err(err!(&format!("Date {:?} not in time-series.", date)))
         };
         let months_delta = date.as_isize() - self.first_date().as_isize();
         if months_delta % self.duration.0 != 0 {
-            return Err(
-                date_not_in_timeseries(
-                    file!(),
-                    line!(),
-                    &format!("{}-{:02}-01", date.year(), date.month()),
-                )
-            )
+            return Err(err!(&format!("Date {:?} not in time-series.", date)))
         };
         let index = (date.as_isize() - self.first_date().as_isize()) / self.duration.0;
 
@@ -546,7 +568,7 @@ impl<const N: usize> RegularTimeSeries<N> {
 
         let spline = CubicSpline::from_nodes(x, y);
 
-        let (add_year, month) = match self.first_date().month() {
+        let (add_year, month) = match self.first_date().month_ord() {
             1           => (0, 1),
             2 | 3 | 4   => (0, 4),
             5 | 6 | 7   => (0, 7),
@@ -567,7 +589,7 @@ impl<const N: usize> RegularTimeSeries<N> {
     }
 
     /// Transform a `RegularTimeSeries` into year-on-year percentage change over the previous year.
-    pub fn to_year_on_year(&self, n: usize) -> Result<RegularTimeSeries<1>, Error> {
+    pub fn to_year_on_year(&self, n: usize) -> Result<RegularTimeSeries<1>> {
 
         let mut v = Vec::new();
         let mut date = self.first_date();
