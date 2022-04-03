@@ -7,6 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+err = { path = "../../../crates/err" }
 peroxide = "0.30.6"
 serde = { version = "1.0.125", features = ["derive"] }
 serde_json = "1.0.64"
