@@ -4,16 +4,22 @@
 //!
 //! #### Examples
 //!
-//! The usual procedure would be to create a `TimeSeries` from a csv file, and then convert to a
-//! `RegularTimeSeries`.
-//!
 //! ```
 //! use std::convert::TryInto;
 //! use std::path::Path;
-//! use time_series::{RegularTimeSeries, TimeSeries};
+//! use time_series::{DateRange, MonthlyDate, RegularTimeSeries, TimeSeries};
 //!
+//! // The standard procedure is to create a `TimeSeries` from `csv` data.
 //! let ts = TimeSeries::<1>::from_csv(&Path::new("./tests/test.csv")).unwrap();
+//!
+//! // And then to convert to a regular time-series with ordered data with regular
+//! // intervals and no missing points.
 //! let rts: RegularTimeSeries::<1> = ts.try_into().unwrap();
+//!
+//! // When we create an iterator we define a range of dates to iterate over, or
+//! // `None, None` for an open range.
+//! let range = DateRange::new(None, Some(MonthlyDate::ym(2013,1)));
+//! let iter = rts.iter(range);
 //! ```
 
 use err::*;
@@ -346,31 +352,6 @@ impl<'a, const N: usize> Iterator for RegularTimeSeriesIter<'a, N> {
     }
 }
 
-#[test]
-fn test_iter() {
-    let date1 = MonthlyDate::ym(1995, 11);
-    let date2 = MonthlyDate::ym(1995, 12);
-    let date3 = MonthlyDate::ym(1996, 1);
-    let date4 = MonthlyDate::ym(1996, 2);
-    let date5 = MonthlyDate::ym(1996, 3);
-
-    let dp1 = DatePoint::new(date1, [1.2]);
-    let dp2 = DatePoint::new(date2, [1.4]);
-    let dp3 = DatePoint::new(date3, [1.6]);
-    let dp4 = DatePoint::new(date4, [1.8]);
-    let dp5 = DatePoint::new(date5, [2.0]);
-
-    let v = vec!( dp1, dp2, dp3, dp4, dp5);
-
-    let rts: RegularTimeSeries<1> = TimeSeries::new(v).try_into().unwrap();
-    let date_range = DateRange::new(&Some(date2), &Some(date4));
-    let mut iter = rts.iter(date_range);
-    assert_eq!(iter.next().unwrap().date(), date2);
-    assert_eq!(iter.next().unwrap().date(), date3);
-    assert_eq!(iter.next().unwrap().date(), date4);
-    assert!(iter.next().is_none());
-}
-
 /// A time-series with regular, contiguous data.
 ///
 /// A `RegularTimeSeries` is guaranteed to have two or more data points.
@@ -413,7 +394,7 @@ impl RegularTimeSeries::<1> {
         let first_date = self.first_date().max(other.first_date());  
         let last_date = self.last_date().min(other.last_date());
 
-        let date_range = DateRange::new(&Some(first_date), &Some(last_date));
+        let date_range = DateRange::new(Some(first_date), Some(last_date));
 
         let mut v: Vec<DatePoint<2>> = Vec::new();
 
@@ -465,35 +446,6 @@ impl<const N: usize> RegularTimeSeries<N> {
         }
         ts.try_into().unwrap()
     }
-}
-
-#[test]
-fn test_with_range() {
-    let date1 = MonthlyDate::ym(1995, 11);
-    let date2 = MonthlyDate::ym(1995, 12);
-    let date3 = MonthlyDate::ym(1996, 1);
-    let date4 = MonthlyDate::ym(1996, 2);
-    let date5 = MonthlyDate::ym(1996, 3);
-
-    let dp1 = DatePoint::new(date1, [1.2]);
-    let dp2 = DatePoint::new(date2, [1.4]);
-    let dp3 = DatePoint::new(date3, [1.6]);
-    let dp4 = DatePoint::new(date4, [1.8]);
-    let dp5 = DatePoint::new(date5, [2.0]);
-
-    let v = vec!( dp1, dp2, dp3, dp4, dp5);
-
-    let mut rts: RegularTimeSeries<1> = TimeSeries::new(v).try_into().unwrap();
-
-    let date_range = DateRange::new(&Some(date2), &Some(date4));
-
-    // rts.with_range(&date_range); 
-
-    // let mut iter = rts.iter(DateRange::new(&None, &None));
-    // assert_eq!(iter.next().unwrap().date(), date2);
-    // assert_eq!(iter.next().unwrap().date(), date3);
-    // assert_eq!(iter.next().unwrap().date(), date4);
-    // assert!(iter.next().is_none());
 }
 
 impl<const N: usize> RegularTimeSeries<N> {
@@ -646,8 +598,11 @@ pub struct DateRange {
 
 impl DateRange {
 
-    /// Return a new `DateRange`.
-    pub fn new(start_date: &Option<MonthlyDate>, end_date: &Option<MonthlyDate>) -> Self {
+    /// Place a filter on the range of dates. `None` means no constraint is applied.
+    /// ```
+    /// let range = DateRange::new(None, Some(MonthlyDate::ym(2013,1)));
+    /// ```
+    pub fn new(start_date: Option<MonthlyDate>, end_date: Option<MonthlyDate>) -> Self {
         DateRange {
             start_date: start_date.clone(),
             end_date: end_date.clone()
