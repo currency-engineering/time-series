@@ -9,7 +9,8 @@
 //! use std::path::Path;
 //! use time_series::{DateRange, MonthlyDate, RegularTimeSeries, TimeSeries};
 //!
-//! // The standard procedure is to create a `TimeSeries` from `csv` data.
+//! // The standard procedure is to create a `TimeSeries` from `csv` data. `
+//! // ::<1> defines the data array to be of length 1.
 //! let ts = TimeSeries::<1>::from_csv(&Path::new("./tests/test.csv")).unwrap();
 //!
 //! // And then to convert to a regular time-series with ordered data with regular
@@ -22,7 +23,7 @@
 //! let iter = rts.iter(range);
 //! ```
 
-use err::*;
+use located_err::*;
 use peroxide::numerical::spline::CubicSpline;
 use serde::{ Serialize, Serializer };
 use std::{
@@ -36,7 +37,7 @@ use std::{
 };
 use time::{ Date, Month };
 
-pub type Result<T> = std::result::Result<T, err::Error>;
+pub type Result<T> = std::result::Result<T, located_err::Error>;
 
 /// A duration between two `Months`.
 ///
