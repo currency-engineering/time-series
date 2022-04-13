@@ -23,7 +23,12 @@
 //! let iter = rts.iter(range);
 //! ```
 
-use located_err::*;
+use anyhow::{
+    bail,
+    Context,
+    Error,
+    Result,
+};
 use peroxide::numerical::spline::CubicSpline;
 use serde::{ Serialize, Serializer };
 use std::{
@@ -37,8 +42,6 @@ use std::{
 };
 use time::{ Date, Month };
 
-pub type Result<T> = std::result::Result<T, located_err::Error>;
-
 /// A duration between two `Months`.
 ///
 /// The value can be positive or negative.
@@ -46,18 +49,14 @@ pub type Result<T> = std::result::Result<T, located_err::Error>;
 pub struct Duration(isize);
 
 impl Duration {
+    fn year() -> Self { Duration(12) }
 
-    fn year(n: isize) -> Self {
-        Duration(12 * n)
-    }
 
     fn new(min: MonthlyDate, max: MonthlyDate) -> Self {
         Duration(max.as_isize() - min.as_isize())
     }
 
-    fn is_not_positive(&self) -> bool {
-        self.0 <= 0
-    }
+    fn is_not_positive(&self) -> bool { self.0 <= 0 }
 }
 
 impl fmt::Display for Duration {
@@ -73,6 +72,44 @@ impl fmt::Display for Duration {
         write!(f, "{}", s)
     }
 }
+
+// Unit tests for Duration
+
+#[test]
+fn duration_year_should_have_12_months() {
+    assert_eq!(Duration::year(), Duration(12));
+}
+
+#[test]
+fn durations_should_work_across_year_boundaries() {
+    assert_eq!(
+        Duration::new(MonthlyDate::ym(2013, 11), MonthlyDate::ym(2014, 1)),
+        Duration(2)
+    )
+}
+
+#[test]
+fn durations_can_be_negative() {
+    assert!(
+        Duration::new(
+            MonthlyDate::ym(2013,4),
+            MonthlyDate::ym(2013,1),
+        )
+        .is_not_positive()
+    )
+}
+
+#[test]
+fn duration_should_be_displayable() {
+    assert_eq!(
+        Duration::new(
+            MonthlyDate::ym(2013,4),
+            MonthlyDate::ym(2013,1),
+        ).to_string(),
+        "-3 months",
+    )
+}
+
 
 /// A date with monthly granularity or larger.
 ///
@@ -227,48 +264,40 @@ impl<const N: usize> TimeSeries<N> {
     pub fn from_csv(path: &Path) -> Result<TimeSeries<1>> {
 
         let s = fs::read_to_string(path)
-            .map_err(|_| err!(
-                &format!("Failed to read file [{}].", path.to_path_buf().to_str().unwrap())
-            ))?;
+            .context(format!("Failed to read file [{}].", path.to_path_buf().to_str().unwrap()))?;
 
         let mut v: Vec<DatePoint<1>> = Vec::new();
         for (i, line) in s.lines().enumerate() {
 
             let year = line[..4].parse()
-                .map_err(|_| {
-                    err!(
-                        &format!(
-                            "Line {:?} file {}. Failed to parse value on line [{}].",
-                            path.to_path_buf(),
-                            i + 1,
-                            String::from(line)
-                        )
+                .context(
+                    format!(
+                        "Line {:?} file {}. Failed to parse value on line [{}].",
+                        path.to_path_buf(),
+                        i + 1,
+                        String::from(line)
                     )
-                })?;
+                )?;
 
             let month = line[5..7].parse()
-                .map_err(|_| {
-                    err!(
-                        &format!(
-                            "Line {:?} file {}. Failed to parse value on line [{}].",
-                            path.to_path_buf(),
-                            i + 1,
-                            String::from(line)
-                        )
+                .context(
+                    format!(
+                        "Line {:?} file {}. Failed to parse value on line [{}].",
+                        path.to_path_buf(),
+                        i + 1,
+                        String::from(line)
                     )
-                })?;
+                )?;
 
             let value = line[12..].parse::<f32>()
-                .map_err(|_| {
-                    err!(
-                        &format!(
-                            "Line {:?} file {}. Failed to parse value on line [{}].",
-                            path.to_path_buf(),
-                            i + 1,
-                            String::from(line)
-                        )
+                .context(
+                    format!(
+                        "Line {:?} file {}. Failed to parse value on line [{}].",
+                        path.to_path_buf(),
+                        i + 1,
+                        String::from(line)
                     )
-                })?;
+                )?;
 
             let dp = DatePoint::<1>::new(
                 MonthlyDate::ym(year, month),
@@ -284,18 +313,16 @@ impl<const N: usize> TimeSeries<N> {
     /// Return the duration between the first and second points.
     pub fn first_duration(&self) -> Result<Duration> {
 
-        if self.0.is_empty() { return Err(err!("Time-series is empty.")) }
+        if self.0.is_empty() { bail!("Time-series is empty.") }
 
-        if self.0.len() == 1 { return Err(err!("Time-series has only one point.")) }
+        if self.0.len() == 1 { bail!("Time-series has only one point.") }
 
         let first_date = self.0[0].date();
         let second_date = self.0[1].date();
 
         let duration = Duration::new(first_date, second_date);
         if duration.is_not_positive() {
-            return Err(err!(
-                &format!("Expected positive duration between {:?} and {:?}.", first_date, second_date)
-            ))
+            bail!(format!("Expected positive duration between {:?} and {:?}.", first_date, second_date))
         };
         Ok(duration)
     }
@@ -382,12 +409,12 @@ impl RegularTimeSeries::<1> {
         // consuming iterator over all the DatePoints.
 
         if self.duration() != other.duration() {
-            return Err(err!(
-                &format!("Expected time-series to have same duration but had [{}] and [{}].",
+            bail!(
+                format!("Expected time-series to have same duration but had [{}] and [{}].",
                     self.duration(),
                     other.duration(),
                 )
-            ))
+            )
         };
 
         // Find first and last dates, then create iterators with this date range and zip.
@@ -455,11 +482,11 @@ impl<const N: usize> RegularTimeSeries<N> {
     pub fn datepoint_from_date(&self, date: MonthlyDate) -> Result<DatePoint::<N>> {
 
         if date < self.first_date() || date > self.last_date() { 
-            return Err(err!(&format!("Date {:?} not in time-series.", date)))
+            bail!(format!("Date {:?} not in time-series.", date))
         };
         let months_delta = date.as_isize() - self.first_date().as_isize();
         if months_delta % self.duration.0 != 0 {
-            return Err(err!(&format!("Date {:?} not in time-series.", date)))
+            bail!(format!("Date {:?} not in time-series.", date))
         };
         let index = (date.as_isize() - self.first_date().as_isize()) / self.duration.0;
 
@@ -555,10 +582,10 @@ impl<const N: usize> RegularTimeSeries<N> {
 
         let mut v = Vec::new();
         let mut date = self.first_date();
-        while let Ok(dp2) = self.datepoint_from_date(date + Duration::year(1)) {
+        while let Ok(dp2) = self.datepoint_from_date(date + Duration::year()) {
             let dp1 = self.datepoint_from_date(date).unwrap();
             let yoy = (dp2.value(0) - dp1.value(n)) * 100.0 / dp1.value(n);
-            let dp = DatePoint::<1>::new(date + Duration::year(1), [yoy]);
+            let dp = DatePoint::<1>::new(date + Duration::year(), [yoy]);
             v.push(dp);
             date = date + self.duration;
         }
@@ -585,10 +612,6 @@ impl<const N: usize> RegularTimeSeries<N> {
         self.ts.0.last().unwrap().date()
     }
 }
-
-// Shouldn't we make a external RegularTimeSeriesIter ? It points into RegularTimeSeries and has a flag which
-// manages the dates.
-
 
 /// Specifies the time-span of the data.
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -701,3 +724,59 @@ mod arrays {
     // }
 }
 
+mod tests {
+
+    // Private
+    
+    // Duration::year
+    // Duration::new
+    // Duration::is_not_positive
+    // Duration::display
+    
+    // 
+
+    // MonthlyDate::year
+    // MonthlyDate::month
+    // MonthlyDate::month_ord
+    // MonthlyDate::ym
+    // MonthyDate into_date
+    // MonthlyDate ord
+    // MonthlyDate compare
+    // MonthlyDate eq
+    // MonthlyDate serialize
+    //
+    // Add Duration to MonthlyDate
+    // MonthlyDate debug
+    //
+    // Datepoint::date
+    // Datepoint::new
+    // Datepoint::value
+    //
+    // TimeSeries::new
+    // TimeSeries::push
+    // TimeSeries::from_csv
+    // TimeSeries::first_duration
+    // TimeSeries::max(n)
+    // TimeSeries::min(n)
+    //
+    // RegularTimeSeries from TimeSeries
+    // RegularTimeSeries::serialize
+    // RegularTimeSeries::zip_one_one
+    // RegularTimeSeries::mut_range
+    // RegularTimeSeries::range
+    // RegularTimeSeries::datepoint_from_date
+    // RegularTimeSeries::iter(DateRange)
+    // RegularTimeSeries::duration
+    // RegularTimeSeries::last
+    // RegularTimeSeries::to_monthly
+    // RegularTimeSeries::to_quarterly
+    // RegularTimeSeries::to_year_on_year
+    // RegularTimeSeries::max
+    // RegularTimeSeries::min
+    // RegularTimeSeries::first_date
+    // RegularTimeSeries::last_date
+    //
+    // DateRange
+    //
+    // RegulatTimeSeriesIter
+}

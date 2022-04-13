@@ -2,15 +2,15 @@
 name = "time_series"
 version = "0.1.0"
 authors = ["Eric Findlay <e.findlay@protonmail.ch>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-located_err = { path = "../../../crates/located_err" }
-peroxide = "0.30.6"
-serde = { version = "1.0.125", features = ["derive"] }
-serde_json = "1.0.64"
-time = "0.3.5"
+anyhow = "1.0.56"
+peroxide = "0.30.14"
+serde = { version = "1.0.136", features = ["derive"] }
+serde_json = "1.0.79"
+time = "0.3.9"
 
 
