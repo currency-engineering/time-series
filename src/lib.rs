@@ -4,7 +4,7 @@
 //!
 //! #### Examples
 //!
-//! ```
+//! ```ignore
 //! use std::convert::TryInto;
 //! use std::path::Path;
 //! use time_series::{DateRange, MonthlyDate, RegularTimeSeries, TimeSeries};
@@ -23,28 +23,35 @@
 //! let iter = rts.iter(range);
 //! ```
 
+// Date implementations. At the moment there is only one - `MonthlyDate`.
+pub mod date_impls;
+
 use anyhow::{
-    bail,
-    Context,
-    Error,
-    Result,
+    // bail,
+    // Context,
+    // Error,
+    // Result,
 };
-use peroxide::numerical::spline::CubicSpline;
-use serde::{ Serialize, Serializer };
+// use chrono::{NaiveDate, Datelike};
+// use peroxide::numerical::spline::CubicSpline;
+use serde::{ Serialize }; // Serializer
 use std::{
     cmp::Ordering,
-    convert::{TryFrom, TryInto},
-    fmt,
-    fs,
     marker::{Copy, PhantomData},
     ops::{Add, Sub},
-    path::Path,
 };
 
-
-// A `Date` can best be though of as a time_scale, with a pointer to one of the marks on the scale.
-// A `Duration` represents the distance between two marks on the scale.
-pub trait Date where Self: Sized {
+//  TODO: This should also implement Serialize
+/// A `Date` can best be though of as a time_scale, with a pointer to one of the marks on the
+/// scale. `Date`s implement `From<chrono::NaiveDate>` and `Into<chrono::NaiveDate>` which provides
+/// functionality as as `parse_from_str()` among other things.
+pub trait Date
+where
+    Self: Sized,
+    Self: From<chrono::NaiveDate>,
+    Self: Into<chrono::NaiveDate>,
+    Self: Serialize,
+{
 
     fn to_scale(&self) -> Scale<Self>;
 
@@ -56,261 +63,91 @@ pub trait Date where Self: Sized {
             _phantom: PhantomData, 
         }  
     }
-
-    fn into_string(fmt: &str) -> String;
-
-    fn from_string(fmt: &str) -> Result<()>;
 }
 
 // We want to control the conversion of a Date into a string, and the conversion of a string into a
 // Date by application code. We do this by having a fmt string as an argument. 
 
+// A `Duration` represents the distance between two marks on the scale.
 pub struct Duration<T: Date> {
     delta: isize,
     _phantom: PhantomData<T>,
 }
+
+// === Scale ======================================================================================
 
 pub struct Scale<T: Date> {
     scale: isize,
     _phantom: PhantomData<T>,
 }
 
-// This is a little odd adding the scale to the duration, but the compiler complains if it is down
-// the other way around like
-//
-// impl<T: TimeScale> Add<Duration<Self>> for T
-// where
-//      T: TimeScale,
-// {
-//     
-//     type Output = Scale<T>;
-// 
-//     fn add(self, rhs: Duration<Self>) -> Self::Output {
-//         (self.to_scale() + rhs.0).from_scale()
-//     }
-// }
-//
-impl<T> Add<T> for Duration<T> where T: Date {
-    type Output = T;
+impl<T: Date> Add<isize> for Scale<T> {
+    type Output = Self;
 
-    fn add(self, rhs: T) -> Self::Output {
-        let scale = Scale {
-            scale: self.delta + rhs.to_scale().scale,
-            _phantom: PhantomData,
-        };
-        T::from_scale(scale)
-    }
-}
-
-impl<T> Sub<T> for Duration<T> where T: Date {
-    type Output = T;
-
-    fn sub(self, rhs: T) -> Self::Output {
-        let scale = Scale {
-            scale:  - self.delta + rhs.to_scale().scale,
-            _phantom: PhantomData,
-        };
-        T::from_scale(scale)
-    }
-}
-
-/// A date with monthly granularity or larger.
-///
-/// Client code is responsible for parsing strings into `MonthlyDate`s.
-#[derive(Clone, Copy)]
-pub struct MonthlyDate {
-    year: usize,
-    month: usize,
-}
-
-pub enum Month {
-    January,
-    February,
-    March,
-    April,
-    May,
-    June,
-    July,
-    August,
-    September,
-    October,
-    November,
-    December,
-}
-
-impl Month {
-    fn to_num(&self) -> isize {
-        match self {
-            Month::January => 1,
-            Month::February => 2,
-            Month::March => 3,
-            Month::April => 4,
-            Month::May => 5,
-            Month::June => 6,
-            Month::July => 7,
-            Month::August => 8,
-            Month::September => 9,
-            Month::October => 10,
-            Month::November => 11,
-            Month::December => 12,
-        }
-    }
-}
-
-impl Date for MonthlyDate {
-    fn to_scale(&self) -> Scale<MonthlyDate> {
+    fn add(self, rhs: isize) -> Self::Output {
         Scale {
-            scale: (self.year * 12 * (self.month - 1)) as isize,
+            scale: self.scale + rhs,
             _phantom: PhantomData,
         }
     }
+}
 
-    fn from_scale(scale: Scale<MonthlyDate>) -> Self {
-        MonthlyDate {
-            year: (scale.scale / 12) as usize,
-            month: (scale.scale % 12 + 1) as usize,
+impl<T: Date> Sub<isize> for Scale<T> {
+    type Output = Self;
+
+    fn sub(self, rhs: isize) -> Self::Output {
+        Scale {
+            scale: self.scale - rhs,
+            _phantom: PhantomData,
         }
     }
 }
 
-// /// A duration between two `Months`.
-// ///
-// /// The value can be positive or negative.
-// #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-// pub struct Duration<D: Date>(isize);
-// 
-// impl Duration {
-//     fn year() -> Self { Duration(12) }
-// 
-// 
-//     fn new(min: MonthlyDate, max: MonthlyDate) -> Self {
-//         Duration(max.as_isize() - min.as_isize())
-//     }
-// 
-//     fn is_not_positive(&self) -> bool { self.0 <= 0 }
-// }
-// 
-// impl fmt::Display for Duration {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         let mut s = String::new();
-//         match self.0 {
-//             1 => s.push_str("1 month"),
-//             n => {
-//                 s.push_str(&n.to_string());
-//                 s.push_str(" months");
-//             },
-//         };
-//         write!(f, "{}", s)
-//     }
-// }
-
-// Unit tests for Duration
-
-
-// Currently only checked for positive inner value.
-impl MonthlyDate {
-
-    /// Return the month of a date.
-    pub fn month(&self) -> Month {
-        match self.month {
-            1 => Month::January,
-            2 => Month::February,
-            3 => Month::March,
-            4 => Month::April,
-            5 => Month::May,
-            6 => Month::June,
-            7 => Month::July,
-            8 => Month::August,
-            9 => Month::September,
-            10 => Month::October,
-            11 => Month::November,
-            12 => Month::December,
-            _ => panic!(),
-        }
-    }
-
-    /// Create a monthly date from a year and month.
-    pub fn ym(year: usize, month: usize) -> Self {
-        MonthlyDate {
-            year,
-            month,
-        }
+impl<T: Date> PartialOrd for Scale<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.scale.cmp(&other.scale))
     }
 }
 
+impl<T: Date> Ord for Scale<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.scale.cmp(&other.scale)
+    }
+}
 
-// impl Into<time::Date> for MonthlyDate {
-//     fn into(self) -> time::Date {
-//         time::Date::from_calendar_date(
-//             self.year().try_into().unwrap(),
-//             self.month(),
-//             1,
-//         ).unwrap()
-//     }
-// }
-// 
-// impl PartialOrd for MonthlyDate {
-//     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-//         Some(self.0.cmp(&other.0))
-//     }
-// }
-// 
-// impl Ord for MonthlyDate {
-//     fn cmp(&self, other: &Self) -> Ordering {
-//         self.0.cmp(&other.0)
-//     }
-// }
-// 
-// impl PartialEq for MonthlyDate {
-//     fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
-// }
-// 
-// impl Serialize for MonthlyDate {
-//     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, <S as Serializer>::Error>
-//     where
-//         S: Serializer,
-//     {
-//         serializer.serialize_str(&format!("{}-{:02}-01", self.year(), self.month()))
-//     }
-// }
-// 
-// impl fmt::Debug for MonthlyDate  {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         f.debug_struct("MonthlyDate")
-//          .field("year", &self.year())
-//          .field("month", &(self.month()))
-//          .finish()
-//     }
-// }
-// 
-// /// A `MonthlyDate` associated with some data.
-// #[derive(Clone, Copy, Debug, Serialize)]
-// pub struct DatePoint<const N: usize> {
-//     date: MonthlyDate,
-//     #[serde(with = "arrays")]
-//     value: [f32; N],
-// }
-// 
-// impl<const N: usize> DatePoint<N> {
-// 
-//     /// Return the date of a datepoint.
-//     pub fn date(&self) -> MonthlyDate { self.date }
-// 
-//     /// Create a new datepoint.
-//     pub fn new(date: MonthlyDate, value: [f32; N]) -> DatePoint<N> {
-//         DatePoint {date, value}
-//     }
-// 
-//     /// Return the value at index `n`.
-//     pub fn value(&self, n: usize) -> f32 {
-//         self.value[n]
-//     }
-// }
-// 
-// /// A time-series with no guarantees of ordering.
-// #[derive(Debug, Serialize)]
-// pub struct TimeSeries<const N: usize>(Vec<DatePoint<N>>);
-// 
+impl<T: Date> PartialEq for Scale<T> {
+    fn eq(&self, other: &Self) -> bool { self.scale == other.scale }
+}
+
+impl<T: Date> Eq for Scale<T> {}
+
+
+// === DatePoint ==================================================================================
+
+/// A `Date` associated with a fixed length array of `f32`s.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct DatePoint<D: Date, const N: usize> {
+    pub date: D,
+    #[serde(with = "arrays")]
+    value: [f32; N],
+}
+
+impl<D: Date, const N: usize> DatePoint<D, N> {
+    /// Create a new datepoint.
+    pub fn new(date: D, value: [f32; N]) -> DatePoint<D, N> {
+        DatePoint {date, value}
+    }
+
+    /// Return the value at column index.
+    pub fn value(&self, column: usize) -> f32 {
+        self.value[column]
+    }
+}
+
+/// A time-series with no guarantees of ordering.
+#[derive(Debug, Serialize)]
+pub struct TimeSeries<D: Date, const N: usize>(Vec<DatePoint<D, N>>);
+
 // impl<const N: usize> TimeSeries<N> {
 // 
 //     /// Construct a `TimeSeries` from a `Vec` of `DatePoints`.
@@ -723,69 +560,69 @@ impl MonthlyDate {
 //         Ok(RegularTimeSeries::<N> { duration, ts })
 //     }
 // }
-// 
-// // https://github.com/serde-rs/serde/issues/1937
-// 
-// mod arrays {
-//     use std::{convert::TryInto, marker::PhantomData};
-// 
-//     use serde::{
-//         de::{SeqAccess, Visitor},
-//         ser::SerializeTuple,
-//         Deserialize, Serialize, Serializer,
-//         // Deserializer
-//     };
-//     pub fn serialize<S: Serializer, T: Serialize, const N: usize>(
-//         data: &[T; N],
-//         ser: S,
-//     ) -> Result<S::Ok, S::Error> {
-//         let mut s = ser.serialize_tuple(N)?;
-//         for item in data {
-//             s.serialize_element(item)?;
-//         }
-//         s.end()
-//     }
-// 
-//     struct ArrayVisitor<T, const N: usize>(PhantomData<T>);
-// 
-//     impl<'de, T, const N: usize> Visitor<'de> for ArrayVisitor<T, N>
-//     where
-//         T: Deserialize<'de>,
-//     {
-//         type Value = [T; N];
-// 
-//         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-//             formatter.write_str(&format!("an array of length {}", N))
-//         }
-// 
-//         #[inline]
-//         fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-//         where
-//             A: SeqAccess<'de>,
-//         {
-//             // can be optimized using MaybeUninit
-//             let mut data = Vec::with_capacity(N);
-//             for _ in 0..N {
-//                 match (seq.next_element())? {
-//                     Some(val) => data.push(val),
-//                     None => return Err(serde::de::Error::invalid_length(N, &self)),
-//                 }
-//             }
-//             match data.try_into() {
-//                 Ok(arr) => Ok(arr),
-//                 Err(_) => unreachable!(),
-//             }
-//         }
-//     }
-// 
-//     // pub fn deserialize<'de, D, T, const N: usize>(deserializer: D) -> Result<[T; N], D::Error>
-//     // where
-//     //     D: Deserializer<'de>,
-//     //     T: Deserialize<'de>,
-//     // {
-//     //     deserializer.deserialize_tuple(N, ArrayVisitor::<T, N>(PhantomData))
-//     // }
-// }
+
+// https://github.com/serde-rs/serde/issues/1937
+
+mod arrays {
+    use std::{convert::TryInto, marker::PhantomData};
+
+    use serde::{
+        de::{SeqAccess, Visitor},
+        ser::SerializeTuple,
+        Deserialize, Serialize, Serializer,
+        // Deserializer
+    };
+    pub fn serialize<S: Serializer, T: Serialize, const N: usize>(
+        data: &[T; N],
+        ser: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut s = ser.serialize_tuple(N)?;
+        for item in data {
+            s.serialize_element(item)?;
+        }
+        s.end()
+    }
+
+    struct ArrayVisitor<T, const N: usize>(PhantomData<T>);
+
+    impl<'de, T, const N: usize> Visitor<'de> for ArrayVisitor<T, N>
+    where
+        T: Deserialize<'de>,
+    {
+        type Value = [T; N];
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str(&format!("an array of length {}", N))
+        }
+
+        #[inline]
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            // can be optimized using MaybeUninit
+            let mut data = Vec::with_capacity(N);
+            for _ in 0..N {
+                match (seq.next_element())? {
+                    Some(val) => data.push(val),
+                    None => return Err(serde::de::Error::invalid_length(N, &self)),
+                }
+            }
+            match data.try_into() {
+                Ok(arr) => Ok(arr),
+                Err(_) => unreachable!(),
+            }
+        }
+    }
+
+    // pub fn deserialize<'de, D, T, const N: usize>(deserializer: D) -> Result<[T; N], D::Error>
+    // where
+    //     D: Deserializer<'de>,
+    //     T: Deserialize<'de>,
+    // {
+    //     deserializer.deserialize_tuple(N, ArrayVisitor::<T, N>(PhantomData))
+    // }
+}
 // 
 // mod tests {
 // 
@@ -884,3 +721,11 @@ impl MonthlyDate {
 // }
 // 
 // 
+mod test {
+
+    #[test]
+    fn division_should_round_down() {
+        assert_eq!(7isize.div_euclid(4), 1);
+        assert_eq!((-7isize).div_euclid(4), -2);
+    }
+}
