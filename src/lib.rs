@@ -27,18 +27,26 @@
 pub mod date_impls;
 
 use anyhow::{
-    // bail,
-    // Context,
-    // Error,
-    // Result,
+    anyhow,
+    bail,
+    Context,
+    Error,
+    Result,
 };
+use csv::Reader;
 // use chrono::{NaiveDate, Datelike};
+use fallible_iterator::{
+    convert,
+};
 // use peroxide::numerical::spline::CubicSpline;
 use serde::{ Serialize }; // Serializer
 use std::{
     cmp::Ordering,
+    ffi::OsStr,
+    fs,
     marker::{Copy, PhantomData},
     ops::{Add, Sub},
+    path::Path,
 };
 
 //  TODO: This should also implement Serialize
@@ -63,25 +71,30 @@ where
             _phantom: PhantomData, 
         }  
     }
+
+    fn parse_from_str(fmt: &str, s: &str) -> Result<Self> {
+        let nd = chrono::NaiveDate::parse_from_str(fmt, s)?;
+        Ok(nd.into())
+    }
 }
 
 // We want to control the conversion of a Date into a string, and the conversion of a string into a
 // Date by application code. We do this by having a fmt string as an argument. 
 
 // A `Duration` represents the distance between two marks on the scale.
-pub struct Duration<T: Date> {
+pub struct Duration<D: Date> {
     delta: isize,
-    _phantom: PhantomData<T>,
+    _phantom: PhantomData<D>,
 }
 
 // === Scale ======================================================================================
 
-pub struct Scale<T: Date> {
+pub struct Scale<D: Date> {
     scale: isize,
-    _phantom: PhantomData<T>,
+    _phantom: PhantomData<D>,
 }
 
-impl<T: Date> Add<isize> for Scale<T> {
+impl<D: Date> Add<isize> for Scale<D> {
     type Output = Self;
 
     fn add(self, rhs: isize) -> Self::Output {
@@ -92,7 +105,7 @@ impl<T: Date> Add<isize> for Scale<T> {
     }
 }
 
-impl<T: Date> Sub<isize> for Scale<T> {
+impl<D: Date> Sub<isize> for Scale<D> {
     type Output = Self;
 
     fn sub(self, rhs: isize) -> Self::Output {
@@ -103,23 +116,23 @@ impl<T: Date> Sub<isize> for Scale<T> {
     }
 }
 
-impl<T: Date> PartialOrd for Scale<T> {
+impl<D: Date> PartialOrd for Scale<D> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.scale.cmp(&other.scale))
     }
 }
 
-impl<T: Date> Ord for Scale<T> {
+impl<D: Date> Ord for Scale<D> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.scale.cmp(&other.scale)
     }
 }
 
-impl<T: Date> PartialEq for Scale<T> {
+impl<D: Date> PartialEq for Scale<D> {
     fn eq(&self, other: &Self) -> bool { self.scale == other.scale }
 }
 
-impl<T: Date> Eq for Scale<T> {}
+impl<D: Date> Eq for Scale<D> {}
 
 
 // === DatePoint ==================================================================================
@@ -148,99 +161,125 @@ impl<D: Date, const N: usize> DatePoint<D, N> {
 #[derive(Debug, Serialize)]
 pub struct TimeSeries<D: Date, const N: usize>(Vec<DatePoint<D, N>>);
 
-// impl<const N: usize> TimeSeries<N> {
-// 
-//     /// Construct a `TimeSeries` from a `Vec` of `DatePoints`.
-//     pub fn new(v: Vec<DatePoint<N>>) -> TimeSeries<N> {
-//         TimeSeries(v)
-//     }
-// 
-//     /// Push a `DatePoint` onto `Self`.
-//     pub fn push(&mut self, date_point: DatePoint<N>) {
-//         self.0.push(date_point)
-//     }
-// 
-//     /// From CSV file with format '2017-01-01, 4.725'.
-//     pub fn from_csv(path: &Path) -> Result<TimeSeries<1>> {
-// 
-//         let s = fs::read_to_string(path)
-//             .context(format!("Failed to read file [{}].", path.to_path_buf().to_str().unwrap()))?;
-// 
-//         let mut v: Vec<DatePoint<1>> = Vec::new();
-//         for (i, line) in s.lines().enumerate() {
-// 
-//             let year = line[..4].parse()
-//                 .context(
-//                     format!(
-//                         "Line {:?} file {}. Failed to parse value on line [{}].",
-//                         path.to_path_buf(),
-//                         i + 1,
-//                         String::from(line)
-//                     )
-//                 )?;
-// 
-//             let month = line[5..7].parse()
-//                 .context(
-//                     format!(
-//                         "Line {:?} file {}. Failed to parse value on line [{}].",
-//                         path.to_path_buf(),
-//                         i + 1,
-//                         String::from(line)
-//                     )
-//                 )?;
-// 
-//             let value = line[12..].parse::<f32>()
-//                 .context(
-//                     format!(
-//                         "Line {:?} file {}. Failed to parse value on line [{}].",
-//                         path.to_path_buf(),
-//                         i + 1,
-//                         String::from(line)
-//                     )
-//                 )?;
-// 
-//             let dp = DatePoint::<1>::new(
-//                 MonthlyDate::ym(year, month),
-//                 [value],
-//             );
-// 
-//             v.push(dp);
-//         }
-// 
-//         Ok(TimeSeries::new(v))
-//     }
-// 
-//     /// Return the duration between the first and second points.
-//     pub fn first_duration(&self) -> Result<Duration> {
-// 
-//         if self.0.is_empty() { bail!("Time-series is empty.") }
-// 
-//         if self.0.len() == 1 { bail!("Time-series has only one point.") }
-// 
-//         let first_date = self.0[0].date();
-//         let second_date = self.0[1].date();
-// 
-//         let duration = Duration::new(first_date, second_date);
-//         if duration.is_not_positive() {
-//             bail!(format!("Expected positive duration between {:?} and {:?}.", first_date, second_date))
-//         };
-//         Ok(duration)
-//     }
-// 
-//     /// Return the maximum of all values at index `n`.
-//     pub fn max(&self, n: usize) -> f32 {
-//         self.0.iter()
-//             .map(|dp| dp.value(n))
-//             .fold(f32::NEG_INFINITY, |a, b| a.max(b))
-//     }
-// 
-//     /// Return the minimum of all values at index `n`.
-//     pub fn min(&self, n: usize) -> f32 {
-//         self.0.iter()
-//             .map(|dp| dp.value(n))
-//             .fold(f32::INFINITY, |a, b| a.min(b))
-//     }
-// }
+impl<D: Date, const N: usize> TimeSeries<D, N> {
+
+    /// Construct a `TimeSeries` from a `Vec` of `DatePoints`.
+    pub fn new(v: Vec<DatePoint<D, N>>) -> TimeSeries<D, N> {
+        TimeSeries(v)
+    }
+
+    /// Push a `DatePoint` onto `Self`.
+    pub fn push(&mut self, date_point: DatePoint<D, N>) {
+        self.0.push(date_point)
+    }
+
+    /// From CSV file with format '2017-01-01, 4.725'.
+    pub fn from_csv<P: AsRef<OsStr> + ?Sized>(path: &P, date_fmt: &str) -> Result<TimeSeries<D, N>> {
+
+        let path_str = path.as_ref().to_str().unwrap_or("unknown");
+
+        let mut acc: Vec<DatePoint<D, N>> = Vec::new();
+
+        let mut rdr = Reader::from_path(path.as_ref())
+            .context(format!("Failed to read file."))?;
+
+        for result_record in rdr.records() {
+
+            let record = result_record?;
+
+            if record.len() != N { 
+                match record.position() {
+                    Some(pos) => bail!("Record length mismatch at line [{}] in file [{}]", pos.line(), path_str),
+                    None => bail!("Record length mismatch at unknown position in file [{}]", path_str),
+                }
+            };
+
+            let date_str = record.get(0).unwrap_or(
+                match record.position() {
+                    Some(pos) => bail!("Failed to get date at line [{}] in file [{}]", pos.line(), path_str),
+                    None => bail!("Failed to get date at unknown position in file [{}]", path_str),
+                }
+            );
+
+            let date = <D as Date>::parse_from_str(date_fmt, date_str).unwrap_or(
+                match record.position() {
+                    Some(pos) => bail!("Failed to parse date at line [{}]", pos.line()),
+                    None => bail!("Failed to parse date at unknown position."),
+                }
+            );
+
+            let mut values = [0f32; N];
+
+            for i in 1..record.len() {
+                let num_str = record.get(i).unwrap_or(
+                    match record.position() {
+                        Some(pos) => {
+                            bail!(
+                                "Failed to get value in column [{}] at line [{}] in file [{}]",
+                                i,
+                                pos.line(),
+                                path_str
+                            )
+                        },
+                        None => {
+                            bail!("Failed to get value at unknown position in file [{}]", path_str)
+                        },
+                    }
+                );
+                values[i] = num_str.parse().unwrap_or(
+                    match record.position() {
+                        Some(pos) => {
+                            bail!(
+                                "Failed to parse value in column [{}] at line [{}] in file [{}]",
+                                i,
+                                pos.line(),
+                                path_str
+                            )
+                        },
+                        None => {
+                            bail!("Failed to parse value at unknown position in file [{}]", path_str)
+                        },
+                    }
+                );
+            }
+
+            acc.push(DatePoint::<D, N>::new(date, values));
+        }
+
+        Ok(TimeSeries::new(acc))
+    }
+
+    // /// Return the duration between the first and second points.
+    // pub fn first_duration(&self) -> Result<Duration> {
+
+    //     if self.0.is_empty() { bail!("Time-series is empty.") }
+
+    //     if self.0.len() == 1 { bail!("Time-series has only one point.") }
+
+    //     let first_date = self.0[0].date();
+    //     let second_date = self.0[1].date();
+
+    //     let duration = Duration::new(first_date, second_date);
+    //     if duration.is_not_positive() {
+    //         bail!(format!("Expected positive duration between {:?} and {:?}.", first_date, second_date))
+    //     };
+    //     Ok(duration)
+    // }
+
+    // /// Return the maximum of all values at index `n`.
+    // pub fn max(&self, n: usize) -> f32 {
+    //     self.0.iter()
+    //         .map(|dp| dp.value(n))
+    //         .fold(f32::NEG_INFINITY, |a, b| a.max(b))
+    // }
+
+    // /// Return the minimum of all values at index `n`.
+    // pub fn min(&self, n: usize) -> f32 {
+    //     self.0.iter()
+    //         .map(|dp| dp.value(n))
+    //         .fold(f32::INFINITY, |a, b| a.min(b))
+    // }
+}
 // 
 // // The only way to construct a RegularTimeSeries is by try_into() from a
 // // TimeSeries, because this checks sufficient length and consistent duration.
