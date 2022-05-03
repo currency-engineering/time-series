@@ -116,6 +116,12 @@ impl MonthlyDate {
     }
 }
 
+impl fmt::Display for MonthlyDate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}-{:02}-01", self.year, self.month)
+    }
+}
+
 impl Serialize for MonthlyDate {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, <S as Serializer>::Error>
     where

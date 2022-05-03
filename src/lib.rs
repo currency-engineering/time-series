@@ -43,6 +43,7 @@ use serde::{ Serialize }; // Serializer
 use std::{
     cmp::Ordering,
     ffi::OsStr,
+    fmt::Display,
     fs,
     marker::{Copy, PhantomData},
     ops::{Add, Sub},
@@ -50,7 +51,7 @@ use std::{
 };
 
 //  TODO: This should also implement Serialize
-/// A `Date` can best be though of as a time_scale, with a pointer to one of the marks on the
+/// A `Date` can best be thought of as a time_scale, with a pointer to one of the marks on the
 /// scale. `Date`s implement `From<chrono::NaiveDate>` and `Into<chrono::NaiveDate>` which provides
 /// functionality as as `parse_from_str()` among other things.
 pub trait Date
@@ -59,15 +60,17 @@ where
     Self: From<chrono::NaiveDate>,
     Self: Into<chrono::NaiveDate>,
     Self: Serialize,
+    Self: Display,
+    Self: Copy,
 {
 
     fn to_scale(&self) -> Scale<Self>;
 
     fn from_scale(scale: Scale<Self>) -> Self;
     
-    fn duration(scale1: Scale<Self>, scale2: Scale<Self>) -> Duration<Self> {
+    fn duration(&self, scale2: Scale<Self>) -> Duration<Self> {
         Duration::<Self> {
-            delta: scale2.scale - scale1.scale,
+            delta: scale2.scale - self.to_scale().scale,
             _phantom: PhantomData, 
         }  
     }
@@ -173,7 +176,7 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         self.0.push(date_point)
     }
 
-    /// From CSV file with format '2017-01-01, 4.725'.
+    // Create a new time-series from csv data.
     pub fn from_csv<P: AsRef<OsStr> + ?Sized>(path: &P, date_fmt: &str) -> Result<TimeSeries<D, N>> {
 
         let path_str = path.as_ref().to_str().unwrap_or("unknown");
@@ -249,22 +252,20 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         Ok(TimeSeries::new(acc))
     }
 
-    // /// Return the duration between the first and second points.
-    // pub fn first_duration(&self) -> Result<Duration> {
+    /// Return the duration between the first and second points.
+    pub fn first_duration(&self) -> Result<Duration<D>> {
+        if self.0.is_empty() { bail!("Time-series is empty.") }
+        if self.0.len() == 1 { bail!("Time-series has only one point.") }
 
-    //     if self.0.is_empty() { bail!("Time-series is empty.") }
+        let first_date = self.0[0].date;
+        let second_date = self.0[1].date;
 
-    //     if self.0.len() == 1 { bail!("Time-series has only one point.") }
-
-    //     let first_date = self.0[0].date();
-    //     let second_date = self.0[1].date();
-
-    //     let duration = Duration::new(first_date, second_date);
-    //     if duration.is_not_positive() {
-    //         bail!(format!("Expected positive duration between {:?} and {:?}.", first_date, second_date))
-    //     };
-    //     Ok(duration)
-    // }
+        let duration: Duration<D> = first_date.duration(second_date.to_scale());
+        if duration.delta <= 0 {
+            bail!(format!("Expected positive duration between {} and {}.", first_date, second_date))
+        };
+        Ok(duration)
+    }
 
     // /// Return the maximum of all values at index `n`.
     // pub fn max(&self, n: usize) -> f32 {
