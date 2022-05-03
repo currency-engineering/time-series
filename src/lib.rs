@@ -23,7 +23,7 @@
 //! let iter = rts.iter(range);
 //! ```
 
-// Date implementations. At the moment there is only one - `MonthlyDate`.
+/// Date implementations. At the moment there is only one - `MonthlyDate`.
 pub mod date_impls;
 
 use anyhow::{
@@ -34,7 +34,6 @@ use anyhow::{
     Result,
 };
 use csv::Reader;
-// use chrono::{NaiveDate, Datelike};
 use fallible_iterator::{
     convert,
 };
@@ -56,18 +55,17 @@ use std::{
 /// functionality as as `parse_from_str()` among other things.
 pub trait Date
 where
-    Self: Sized,
-    Self: From<chrono::NaiveDate>,
-    Self: Into<chrono::NaiveDate>,
-    Self: Serialize,
-    Self: Display,
-    Self: Copy,
+    Self: Sized + From<chrono::NaiveDate> + Into<chrono::NaiveDate> + Serialize + Display + Copy,
 {
 
+    /// Associate a number with every `Date` value.
     fn to_scale(&self) -> Scale<Self>;
 
+    /// Give an `Scale`, return its associated `Date`.
     fn from_scale(scale: Scale<Self>) -> Self;
     
+    /// Return the duration between two markers on a scale. The value can be position, zero, or
+    /// negiative.
     fn duration(&self, scale2: Scale<Self>) -> Duration<Self> {
         Duration::<Self> {
             delta: scale2.scale - self.to_scale().scale,
@@ -75,6 +73,7 @@ where
         }  
     }
 
+    /// Parse a `Date` from a string, given a format string.
     fn parse_from_str(fmt: &str, s: &str) -> Result<Self> {
         let nd = chrono::NaiveDate::parse_from_str(fmt, s)?;
         Ok(nd.into())
@@ -84,7 +83,8 @@ where
 // We want to control the conversion of a Date into a string, and the conversion of a string into a
 // Date by application code. We do this by having a fmt string as an argument. 
 
-// A `Duration` represents the distance between two marks on the scale.
+/// `Duration<MonthlyDate>` represents an interval on the `Scale<MonthlyDate>` scale. It wraps an
+/// `isize`.
 pub struct Duration<D: Date> {
     delta: isize,
     _phantom: PhantomData<D>,
@@ -92,6 +92,7 @@ pub struct Duration<D: Date> {
 
 // === Scale ======================================================================================
 
+/// For example, `Scale<MonthlyDate>` is a scale with markers at each month.
 pub struct Scale<D: Date> {
     scale: isize,
     _phantom: PhantomData<D>,
@@ -181,7 +182,7 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
 
         let path_str = path.as_ref().to_str().unwrap_or("unknown");
 
-        let mut acc: Vec<DatePoint<D, N>> = Vec::new();
+        let acc: Vec<DatePoint<D, N>> = Vec::new();
 
         let mut rdr = Reader::from_path(path.as_ref())
             .context(format!("Failed to read file."))?;
@@ -267,59 +268,60 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         Ok(duration)
     }
 
-    // /// Return the maximum of all values at index `n`.
-    // pub fn max(&self, n: usize) -> f32 {
-    //     self.0.iter()
-    //         .map(|dp| dp.value(n))
-    //         .fold(f32::NEG_INFINITY, |a, b| a.max(b))
-    // }
+    /// Return the maximum of all values at index `n`.
+    pub fn max(&self, n: usize) -> f32 {
+        self.0.iter()
+            .map(|dp| dp.value(n))
+            .fold(f32::NEG_INFINITY, |a, b| a.max(b))
+    }
 
-    // /// Return the minimum of all values at index `n`.
-    // pub fn min(&self, n: usize) -> f32 {
-    //     self.0.iter()
-    //         .map(|dp| dp.value(n))
-    //         .fold(f32::INFINITY, |a, b| a.min(b))
-    // }
+    /// Return the minimum of all values at index `n`.
+    pub fn min(&self, n: usize) -> f32 {
+        self.0.iter()
+            .map(|dp| dp.value(n))
+            .fold(f32::INFINITY, |a, b| a.min(b))
+    }
 }
-// 
-// // The only way to construct a RegularTimeSeries is by try_into() from a
-// // TimeSeries, because this checks sufficient length and consistent duration.
-// /// An iterator over a `RegularTimeSeries`.
-// pub struct RegularTimeSeriesIter<'a, const N: usize> {
-//     start_date: MonthlyDate,
-//     end_date: MonthlyDate,
-//     date_points: &'a Vec<DatePoint<N>>,
-//     counter: usize,
-// }
-// 
-// impl<'a, const N: usize> Iterator for RegularTimeSeriesIter<'a, N> {
-//     type Item = DatePoint<N>;
-// 
-//     fn next(&mut self) -> Option<Self::Item> {
-// 
-//         // Beyond the end of self.date_points.
-//         if self.counter >= self.date_points.len() {
-//             None
-//         } else {
-// 
-//             // Counter points into self.date_points and before start date.
-//             if self.date_points[self.counter].date() < self.start_date {
-//                 self.counter += 1;
-//                 self.next()
-// 
-//             // Counter points into self.date_points but past end date.
-//             } else if self.date_points[self.counter].date() > self.end_date {
-//                 return None
-// 
-//             // Counter points into self.date_points and inside range.
-//             } else {
-//                 self.counter += 1;
-//                 return Some(self.date_points[self.counter - 1])
-//             }
-//         }
-//     }
-// }
-// 
+
+
+// The only way to construct a RegularTimeSeries is by try_into() from a
+// TimeSeries, because this checks sufficient length and consistent duration.
+/// An iterator over a `RegularTimeSeries`.
+pub struct RegularTimeSeriesIter<'a, D: Date, const N: usize> {
+    start_date: D,
+    end_date: D,
+    date_points: &'a Vec<DatePoint<D, N>>,
+    counter: usize,
+}
+
+impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
+    type Item = DatePoint<D, N>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+
+        // Beyond the end of self.date_points.
+        if self.counter >= self.date_points.len() {
+            None
+        } else {
+
+            // Counter points into self.date_points and before start date.
+            if self.date_points[self.counter].date.to_scale() < self.start_date.to_scale() {
+                self.counter += 1;
+                self.next()
+
+            // Counter points into self.date_points but past end date.
+            } else if self.date_points[self.counter].date.to_scale() > self.end_date.to_scale() {
+                return None
+
+            // Counter points into self.date_points and inside range.
+            } else {
+                self.counter += 1;
+                return Some(self.date_points[self.counter - 1])
+            }
+        }
+    }
+}
+
 // /// A time-series with regular, contiguous data.
 // ///
 // /// A `RegularTimeSeries` is guaranteed to have two or more data points.
