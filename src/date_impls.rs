@@ -140,18 +140,25 @@ impl fmt::Debug for MonthlyDate  {
     }
 }
 
+#[cfg(test)]
 pub mod test {
 
-use crate::TimeSeries;
-use crate::date_impls::MonthlyDate;
+    use crate::TimeSeries;
+    use crate::date_impls::MonthlyDate;
 
-#[test]
-fn from_csv() {
-    let csv_str = "2020-01-01, 1.2";
-    let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d");
-    dbg!(ts);
-    assert!(false);
-}
+    #[test]
+    fn from_csv_works() {
+        let csv_str = "2020-01-01, 1.2";
+        let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
+        assert!(ts.len() == 1);
+    }
 
-
+    #[test]
+    fn from_csv_should_fail_with_wrong_length() {
+        let csv_str = "2020-01-01, 1.2";
+        let _ts = match TimeSeries::<MonthlyDate, 2>::from_csv_str(csv_str, "%Y-%m-%d") {
+            Ok(_) => assert!(false),
+            Err(e) => assert_eq!(e.to_string(), "Record length mismatch at line [1]"),
+        };
+    }
 }

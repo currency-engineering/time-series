@@ -31,13 +31,13 @@ use anyhow::{
     Context,
     Result,
 };
-use csv::{Position, Reader};
+use csv::{Position, Reader, ReaderBuilder, Trim};
 // use peroxide::numerical::spline::CubicSpline;
 use serde::{ Serialize }; // Serializer
 use std::{
     cmp::Ordering,
     ffi::OsStr,
-    fmt::Display,
+    fmt::{Debug, Display},
     io::Read,
     marker::{Copy, PhantomData},
     ops::{Add, Sub},
@@ -64,7 +64,7 @@ fn csv_error_msg(msg: &str, position: Option<&Position>, opt_path_str: Option<&s
 /// functionality as as `parse_from_str()` among other things.
 pub trait Date
 where
-    Self: Sized + From<chrono::NaiveDate> + Into<chrono::NaiveDate> + Serialize + Display + Copy,
+    Self: Sized + From<chrono::NaiveDate> + Into<chrono::NaiveDate> + Serialize + Debug + Display + Copy,
 {
 
     /// Associate a number with every `Date` value.
@@ -195,12 +195,14 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
 
         let mut acc: Vec<DatePoint<D, N>> = Vec::new();
 
+        // rdr doesn't impl Debug
+
         // Iterate over lines of csv
         for result_record in rdr.records() {
 
             // Verify record lengths
             let record = result_record?;
-            if record.len() != N { 
+            if record.len() != N + 1 { 
                 bail!(csv_error_msg("Record length mismatch", record.position(), opt_path_str))
             }
 
@@ -208,7 +210,8 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
             let date_str = record.get(0).context(
                 csv_error_msg("Failed to get date", record.position(), opt_path_str)
             )?;
-            let date = <D as Date>::parse_from_str(date_fmt, date_str).context(
+
+            let date = <D as Date>::parse_from_str(date_str, date_fmt).context(
                 csv_error_msg("Failed to parse date", record.position(), opt_path_str)
             )?;
 
@@ -222,7 +225,7 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
                         opt_path_str
                     )
                 )?;
-                values[i] = num_str.parse().context(
+                values[i - 1] = num_str.parse().context(
                     csv_error_msg(
                         &format!("Failed to parse value in column [{}]", i),
                         record.position(),
@@ -234,7 +237,7 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         }
         Ok(TimeSeries::new(acc))
     }
-    
+
     /// Create a new time-series from csv file. `date_fmt` specification can be found in the
     /// [chrono crate](https://docs.rs/chrono/latest/chrono/format/strftime/index.html#specifiers).
     pub fn from_csv<P: AsRef<OsStr> + ?Sized>(path: &P, date_fmt: &str) -> Result<Self> {
@@ -243,14 +246,53 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
             Some(path) => format!("Failed to read file at [{}]", path),
             None => format!("Failed to read file"),
         };
-        let rdr = Reader::from_path(path.as_ref()).context(error_message)?;
+
+        let rdr = ReaderBuilder::new()
+            .has_headers(false)
+            .trim(Trim::All)
+            .from_path(path.as_ref())
+            .context(error_message)?;
+
+        TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, opt_path_str)
+    }
+
+    /// Create a new time-series from csv file. Usually it is sufficient to use the default
+    /// `csv::Reader` but if you need to control the csv reader then you can pass in a
+    /// configured `csv::ReaderBuilder`.
+    pub fn from_csv_with_builder<P: AsRef<OsStr> + ?Sized>(
+        path: &P,
+        date_fmt: &str,
+        rdr_builder: ReaderBuilder) -> Result<Self>
+    {
+        let opt_path_str = path.as_ref().to_str();
+        let error_message = match opt_path_str {
+            Some(path) => format!("Failed to read file at [{}]", path),
+            None => format!("Failed to read file"),
+        };
+
+        let rdr = rdr_builder
+            .from_path(path.as_ref())
+            .context(error_message)?;
 
         TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, opt_path_str)
     }
 
     /// Create a new time-series from a string in csv format.
     pub fn from_csv_str(csv: &str, date_fmt: &str) -> Result<Self> {
-        let rdr = Reader::from_reader(csv.as_bytes());
+
+        let rdr = ReaderBuilder::new()
+            .has_headers(false)
+            .trim(Trim::All)
+            .from_reader(csv.as_bytes());
+
+        TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, None)
+    }
+
+    /// Create a new time-series from csv file. Usually it is sufficient to use the default
+    /// `csv::Reader` but if you need to control the csv reader then you can pass in a
+    /// configured `csv::ReaderBuilder`.
+    pub fn from_csv_str_with_builder(csv: &str, date_fmt: &str, rdr_builder: ReaderBuilder) -> Result<Self> {
+        let rdr = rdr_builder.from_reader(csv.as_bytes());
         TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, None)
     }
 
@@ -281,6 +323,10 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         self.0.iter()
             .map(|dp| dp.value(n))
             .fold(f32::INFINITY, |a, b| a.min(b))
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
 }
 
@@ -762,13 +808,20 @@ mod arrays {
 //         )
 //     }
 // }
-// 
-// 
+
+#[cfg(test)]
 mod test {
+    use chrono::{Datelike, NaiveDate};
 
     #[test]
     fn division_should_round_down_even_when_numerator_is_negative() {
         assert_eq!(7isize.div_euclid(4), 1);
         assert_eq!((-7isize).div_euclid(4), -2);
+    }
+
+    #[test]
+    fn date_should_parse() {
+        let date = NaiveDate::parse_from_str("2020-01-01", "%Y-%m-%d").unwrap();
+        assert!(date.year() == 2020);
     }
 }
