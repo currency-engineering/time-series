@@ -27,27 +27,36 @@
 pub mod date_impls;
 
 use anyhow::{
-    anyhow,
     bail,
     Context,
-    Error,
     Result,
 };
-use csv::Reader;
-use fallible_iterator::{
-    convert,
-};
+use csv::{Position, Reader};
 // use peroxide::numerical::spline::CubicSpline;
 use serde::{ Serialize }; // Serializer
 use std::{
     cmp::Ordering,
     ffi::OsStr,
     fmt::Display,
-    fs,
+    io::Read,
     marker::{Copy, PhantomData},
     ops::{Add, Sub},
-    path::Path,
 };
+
+// === Error Handling =============================================================================
+
+// Given an error message, an optional position in csv string or file and an optional file path,
+// return a full error message.
+fn csv_error_msg(msg: &str, position: Option<&Position>, opt_path_str: Option<&str>) -> String {
+    match (position, opt_path_str) {
+        (Some(pos), Some(path)) => format!("{} at line [{}] in file [{}]", msg, pos.line(), path),
+        (Some(pos), None) => format!("{} at line [{}]", msg, pos.line()),
+        (None, Some(path)) => format!("{} in file [{}]", msg, path),
+        (None, None) => format!("{}", msg),
+    }
+}
+
+// ================================================================================================
 
 //  TODO: This should also implement Serialize
 /// A `Date` can best be thought of as a time_scale, with a pointer to one of the marks on the
@@ -161,7 +170,8 @@ impl<D: Date, const N: usize> DatePoint<D, N> {
     }
 }
 
-/// A time-series with no guarantees of ordering.
+/// A time-series with no guarantees of ordering. The canonical method to create a time-series is
+/// from a csv file using `TimeSeries::from_csv("/path/to/data.csv", "%Y-%m-%d")`.
 #[derive(Debug, Serialize)]
 pub struct TimeSeries<D: Date, const N: usize>(Vec<DatePoint<D, N>>);
 
@@ -177,80 +187,71 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         self.0.push(date_point)
     }
 
-    // Create a new time-series from csv data.
-    pub fn from_csv<P: AsRef<OsStr> + ?Sized>(path: &P, date_fmt: &str) -> Result<TimeSeries<D, N>> {
 
-        let path_str = path.as_ref().to_str().unwrap_or("unknown");
+    // Having an inner function allows from_csv() to read either from a file of from a string.
+    // The `path_str` argument contains the file name if it exists, for error messages.
+    //
+    fn from_csv_inner<R: Read>(mut rdr: Reader<R> , date_fmt: &str, opt_path_str: Option<&str>) -> Result<Self> {
 
-        let acc: Vec<DatePoint<D, N>> = Vec::new();
+        let mut acc: Vec<DatePoint<D, N>> = Vec::new();
 
-        let mut rdr = Reader::from_path(path.as_ref())
-            .context(format!("Failed to read file."))?;
-
+        // Iterate over lines of csv
         for result_record in rdr.records() {
 
+            // Verify record lengths
             let record = result_record?;
-
             if record.len() != N { 
-                match record.position() {
-                    Some(pos) => bail!("Record length mismatch at line [{}] in file [{}]", pos.line(), path_str),
-                    None => bail!("Record length mismatch at unknown position in file [{}]", path_str),
-                }
-            };
-
-            let date_str = record.get(0).unwrap_or(
-                match record.position() {
-                    Some(pos) => bail!("Failed to get date at line [{}] in file [{}]", pos.line(), path_str),
-                    None => bail!("Failed to get date at unknown position in file [{}]", path_str),
-                }
-            );
-
-            let date = <D as Date>::parse_from_str(date_fmt, date_str).unwrap_or(
-                match record.position() {
-                    Some(pos) => bail!("Failed to parse date at line [{}]", pos.line()),
-                    None => bail!("Failed to parse date at unknown position."),
-                }
-            );
-
-            let mut values = [0f32; N];
-
-            for i in 1..record.len() {
-                let num_str = record.get(i).unwrap_or(
-                    match record.position() {
-                        Some(pos) => {
-                            bail!(
-                                "Failed to get value in column [{}] at line [{}] in file [{}]",
-                                i,
-                                pos.line(),
-                                path_str
-                            )
-                        },
-                        None => {
-                            bail!("Failed to get value at unknown position in file [{}]", path_str)
-                        },
-                    }
-                );
-                values[i] = num_str.parse().unwrap_or(
-                    match record.position() {
-                        Some(pos) => {
-                            bail!(
-                                "Failed to parse value in column [{}] at line [{}] in file [{}]",
-                                i,
-                                pos.line(),
-                                path_str
-                            )
-                        },
-                        None => {
-                            bail!("Failed to parse value at unknown position in file [{}]", path_str)
-                        },
-                    }
-                );
+                bail!(csv_error_msg("Record length mismatch", record.position(), opt_path_str))
             }
 
+            // Parse date
+            let date_str = record.get(0).context(
+                csv_error_msg("Failed to get date", record.position(), opt_path_str)
+            )?;
+            let date = <D as Date>::parse_from_str(date_fmt, date_str).context(
+                csv_error_msg("Failed to parse date", record.position(), opt_path_str)
+            )?;
+
+            // Parse values
+            let mut values = [0f32; N];
+            for i in 1..record.len() {
+                let num_str = record.get(i).context(
+                    csv_error_msg(
+                        &format!("Failed to get value in column [{}]", i),
+                        record.position(),
+                        opt_path_str
+                    )
+                )?;
+                values[i] = num_str.parse().context(
+                    csv_error_msg(
+                        &format!("Failed to parse value in column [{}]", i),
+                        record.position(),
+                        opt_path_str,
+                    )
+                )?
+            }
             acc.push(DatePoint::<D, N>::new(date, values));
         }
-
         Ok(TimeSeries::new(acc))
+    }
+    
+    /// Create a new time-series from csv file. `date_fmt` specification can be found in the
+    /// [chrono crate](https://docs.rs/chrono/latest/chrono/format/strftime/index.html#specifiers).
+    pub fn from_csv<P: AsRef<OsStr> + ?Sized>(path: &P, date_fmt: &str) -> Result<Self> {
+        let opt_path_str = path.as_ref().to_str();
+        let error_message = match opt_path_str {
+            Some(path) => format!("Failed to read file at [{}]", path),
+            None => format!("Failed to read file"),
+        };
+        let rdr = Reader::from_path(path.as_ref()).context(error_message)?;
+
+        TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, opt_path_str)
+    }
+
+    /// Create a new time-series from a string in csv format.
+    pub fn from_csv_str(csv: &str, date_fmt: &str) -> Result<Self> {
+        let rdr = Reader::from_reader(csv.as_bytes());
+        TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, None)
     }
 
     /// Return the duration between the first and second points.
@@ -766,7 +767,7 @@ mod arrays {
 mod test {
 
     #[test]
-    fn division_should_round_down() {
+    fn division_should_round_down_even_when_numerator_is_negative() {
         assert_eq!(7isize.div_euclid(4), 1);
         assert_eq!((-7isize).div_euclid(4), -2);
     }

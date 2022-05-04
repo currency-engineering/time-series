@@ -1,5 +1,5 @@
 
-use chrono::{NaiveDate, Datelike};
+use chrono::{Datelike};
 use crate::{Date, Scale};
 use serde::{Serialize, Serializer};
 use std::{
@@ -138,4 +138,20 @@ impl fmt::Debug for MonthlyDate  {
          .field("month", &(self.month))
          .finish()
     }
+}
+
+pub mod test {
+
+use crate::TimeSeries;
+use crate::date_impls::MonthlyDate;
+
+#[test]
+fn from_csv() {
+    let csv_str = "2020-01-01, 1.2";
+    let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d");
+    dbg!(ts);
+    assert!(false);
+}
+
+
 }
