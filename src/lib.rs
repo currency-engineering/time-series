@@ -74,15 +74,6 @@ where
     /// Give an `Scale`, return its associated `Date`.
     fn from_scale(scale: Scale<Self>) -> Self;
     
-    /// Return the duration between two markers on a scale. The value can be position, zero, or
-    /// negiative.
-    fn duration(&self, scale2: Scale<Self>) -> Duration<Self> {
-        Duration::<Self> {
-            delta: scale2.scale - self.to_scale().scale,
-            _phantom: PhantomData, 
-        }  
-    }
-
     /// Parse a `Date` from a string, given a format string.
     fn parse_from_str(fmt: &str, s: &str) -> Result<Self> {
         let nd = chrono::NaiveDate::parse_from_str(fmt, s)?;
