@@ -27,6 +27,7 @@
 pub mod date_impls;
 
 use anyhow::{
+    anyhow,
     bail,
     Context,
     Result,
@@ -111,6 +112,15 @@ pub struct Scale<D: Date> {
     _phantom: PhantomData<D>,
 }
 
+// impl<D: Date> Scale<D> {
+//     from_isize(i: isize) -> Self {
+//         Scale {
+//             scale: i,
+//             _phantom: PhantomData<D>,
+//         }
+//     }
+// }
+
 impl<D: Date> Add<isize> for Scale<D> {
     type Output = Self;
 
@@ -172,23 +182,33 @@ impl<D: Date, const N: usize> DatePoint<D, N> {
     pub fn value(&self, column: usize) -> f32 {
         self.value[column]
     }
+
+    /// Return the date of a `DatePoint`.
+    pub fn date(&self) -> D {
+        self.date
+    }
 }
 
-/// A time-series with no guarantees of ordering. The canonical method to create a time-series is
-/// from a csv file using `TimeSeries::from_csv("/path/to/data.csv", "%Y-%m-%d")`.
+/// A time-series with no guarantees of ordering or unique dates, but must have at least one
+/// element. The canonical method to create a time-series is from a csv file using
+/// `TimeSeries::from_csv("/path/to/data.csv", "%Y-%m-%d")`.
 #[derive(Debug, Serialize)]
 pub struct TimeSeries<D: Date, const N: usize>(Vec<DatePoint<D, N>>);
 
 impl<D: Date, const N: usize> TimeSeries<D, N> {
 
-    /// Construct a `TimeSeries` from a `Vec` of `DatePoints`.
-    pub fn new(v: Vec<DatePoint<D, N>>) -> TimeSeries<D, N> {
-        TimeSeries(v)
+    fn first(&self) -> DatePoint<D, N> {
+        *self.0.first().unwrap()
     }
 
-    /// Push a `DatePoint` onto `Self`.
-    pub fn push(&mut self, date_point: DatePoint<D, N>) {
-        self.0.push(date_point)
+    fn last(&self) -> DatePoint<D, N> {
+        *self.0.last().unwrap()
+    }
+
+    fn first_position(&self, date: &D) -> Option<usize> {
+        let scale = date.to_scale();
+
+        self.0.iter().position(|date_point| date_point.date().to_scale() == scale)
     }
 
 
@@ -239,7 +259,11 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
             }
             acc.push(DatePoint::<D, N>::new(date, values));
         }
-        Ok(TimeSeries::new(acc))
+        if acc.is_empty() {
+            bail!("TimeSeries must have at least one element.")
+        }
+
+        Ok(TimeSeries(acc))
     }
 
     /// Create a new time-series from csv file. `date_fmt` specification can be found in the
@@ -300,37 +324,70 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, None)
     }
 
-    /// Return the duration between the first and second points.
-    pub fn first_duration(&self) -> Result<Duration<D>> {
-        if self.0.is_empty() { bail!("Time-series is empty.") }
-        if self.0.len() == 1 { bail!("Time-series has only one point.") }
+    // /// Return the duration between the first and second points.
+    // pub fn first_duration(&self) -> Result<Duration<D>> {
+    //     if self.0.is_empty() { bail!("Time-series is empty.") }
+    //     if self.0.len() == 1 { bail!("Time-series has only one point.") }
 
-        let first_date = self.0[0].date;
-        let second_date = self.0[1].date;
+    //     let first_date = self.0[0].date;
+    //     let second_date = self.0[1].date;
 
-        let duration: Duration<D> = first_date.duration(second_date.to_scale());
-        if duration.delta <= 0 {
-            bail!(format!("Expected positive duration between {} and {}.", first_date, second_date))
-        };
-        Ok(duration)
-    }
+    //     let duration: Duration<D> = first_date.duration(second_date.to_scale());
+    //     if duration.delta <= 0 {
+    //         bail!(format!("Expected positive duration between {} and {}.", first_date, second_date))
+    //     };
+    //     Ok(duration)
+    // }
 
-    /// Return the maximum of all values at index `n`.
-    pub fn max(&self, n: usize) -> f32 {
-        self.0.iter()
-            .map(|dp| dp.value(n))
-            .fold(f32::NEG_INFINITY, |a, b| a.max(b))
-    }
+    // /// Return the maximum of all values at index `n`.
+    // pub fn max(&self, n: usize) -> f32 {
+    //     self.0.iter()
+    //         .map(|dp| dp.value(n))
+    //         .fold(f32::NEG_INFINITY, |a, b| a.max(b))
+    // }
 
-    /// Return the minimum of all values at index `n`.
-    pub fn min(&self, n: usize) -> f32 {
-        self.0.iter()
-            .map(|dp| dp.value(n))
-            .fold(f32::INFINITY, |a, b| a.min(b))
-    }
+    // /// Return the minimum of all values at index `n`.
+    // pub fn min(&self, n: usize) -> f32 {
+    //     self.0.iter()
+    //         .map(|dp| dp.value(n))
+    //         .fold(f32::INFINITY, |a, b| a.min(b))
+    // }
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    // Convert a `TimeSeries` into a `RegularTimeSeries` which guarantees that there are no gaps in
+    // the data.
+    pub fn into_regular(
+        self, 
+        start_date: Option<D>, 
+        end_date: Option<D>) -> Result<RegularTimeSeries<D, N>>
+    {
+        let range = DateRange::new(
+            start_date.unwrap_or(self.first().date()),
+            end_date.unwrap_or(self.last().date()),
+        )?;
+
+        self.check_contiguous_over(&range)?;
+        Ok(RegularTimeSeries { range, ts: self })
+    }
+
+    // Fails if dates are not contiguous over the range.
+    pub fn check_contiguous_over(&self, range: &DateRange<D>) -> Result<()> {
+
+        // Build time_series iter that removes everything before first date
+        let ts_iter = self.0.iter().skip_while(|dp| dp.date().to_scale() != range.start);
+
+        // Zip to date iter and check that dates are the same.
+        let check: Option<usize> = range.into_iter()
+            .zip(ts_iter)
+            .position(|(date, dp)| date.to_scale() != dp.date().to_scale());
+
+        match check {
+            Some(i) => { Err(anyhow!(format!("Mismatch at line [{}]", i))) },
+            None => Ok(()),
+        }
     }
 }
 
@@ -374,15 +431,14 @@ impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
     }
 }
 
-// /// A time-series with regular, contiguous data.
-// ///
-// /// A `RegularTimeSeries` is guaranteed to have two or more data points.
-// #[derive(Debug)]
-// pub struct RegularTimeSeries<D: Date, const N: usize> {
-//     duration:   Duration, 
-//     range:      DateRange,
-//     ts:         TimeSeries<D, N>,
-// }
+/// A time-series with regular, contiguous data.
+///
+/// A `RegularTimeSeries` is guaranteed to have two or more data points.
+#[derive(Debug)]
+pub struct RegularTimeSeries<D: Date, const N: usize> {
+    range:      DateRange<D>,
+    ts:         TimeSeries<D, N>,
+}
 
 // impl<const N: usize> Serialize for RegularTimeSeries<N> {
 //     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
@@ -608,26 +664,58 @@ impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
 //     }
 // }
 
-// /// Specifies the time-span of the data.
-// #[derive(Clone, Copy, Debug, Serialize)]
-// pub struct DateRange<D: Date> {
-//     start: Option<Scale<D>>,
-//     end:   Option<Scale<D>>,
-// }
+/// An iterable range of date.
+#[derive(Clone, Copy, Debug)]
+pub struct DateRange<D: Date>{
+    start: Scale<D>,
+    end: Scale<D>
+}
 
-// impl DateRange {
-// 
-//     /// Place a filter on the range of dates. `None` means no constraint is applied.
-//     /// ```
-//     /// let range = DateRange::new(None, Some(MonthlyDate::ym(2013,1)));
-//     /// ```
-//     pub fn new(start_date: Option<MonthlyDate>, end_date: Option<MonthlyDate>) -> Self {
-//         DateRange {
-//             start_date: start_date.clone(),
-//             end_date: end_date.clone()
-//         }
-//     }
-// 
+impl<D: Date> DateRange<D> {
+
+    pub fn new(start_date: D, end_date: D) -> Result<Self> {
+
+        let start = start_date.to_scale();
+        let end = end_date.to_scale();
+
+        if start > end {
+            bail!("Start date [{}] is later than end date [{}]", start_date, end_date)
+        }
+        Ok(DateRange { start, end })
+    }
+}
+
+impl<D: Date> IntoIterator for DateRange<D> {
+    type Item = D;
+    type IntoIter = DateRangeIter<D>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        DateRangeIter {
+            ptr: self.start,
+            range: self,
+        }
+    }
+}
+
+pub struct DateRangeIter<D: Date> {
+    ptr: Scale<D>,
+    range: DateRange<D>,
+}
+
+impl<D: Date> Iterator for DateRangeIter<D> {
+    type Item = D;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.ptr <= self.range.end {
+            let date = Date::from_scale(self.ptr);
+            self.ptr = self.ptr + 1;
+            Some(date)
+        } else {
+            None
+        }
+    }
+}
+
 //     /// Return the first date.
 //     pub fn first_date(&self) -> Option<MonthlyDate> {
 //         self.start_date.map(|md| MonthlyDate(md.0))
@@ -645,6 +733,8 @@ impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
 // //     end_date:   MonthlyDate,
 // // }
 // 
+
+// This shouldn't be used.
 // impl<const N: usize> TryFrom<TimeSeries<N>> for RegularTimeSeries<N> {
 //     type Error = Error;
 // 
@@ -829,5 +919,10 @@ mod test {
     fn date_should_parse() {
         let date = NaiveDate::parse_from_str("2020-01-01", "%Y-%m-%d").unwrap();
         assert!(date.year() == 2020);
+    }
+
+    #[test]
+    fn check_contiguous_over() {
+        assert!(false)
     }
 }

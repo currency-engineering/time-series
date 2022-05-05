@@ -147,14 +147,24 @@ impl fmt::Debug for MonthlyDate  {
 #[cfg(test)]
 pub mod test {
 
-    use crate::TimeSeries;
+    use crate::{
+        DateRange,
+        TimeSeries,
+    };
     use crate::date_impls::MonthlyDate;
 
     #[test]
-    fn from_csv_works() {
+    fn creating_timeseries_from_csv_should_work() {
         let csv_str = "2020-01-01, 1.2";
         let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
         assert!(ts.len() == 1);
+    }
+
+    #[test]
+    fn timeseries_should_have_at_least_one_element() {
+        let csv_str = "";
+        let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
+        assert!(false);
     }
 
     #[test]
@@ -164,5 +174,12 @@ pub mod test {
             Ok(_) => assert!(false),
             Err(e) => assert_eq!(e.to_string(), "Record length mismatch at line [1]"),
         };
+    }
+
+    #[test]
+    fn creating_daterange_from_monthlydates_should_work() {
+        let date1 = MonthlyDate::ym(2020, 1);
+        let date2 = MonthlyDate::ym(2021, 1);
+        let daterange = DateRange::new(date1, date2);
     }
 }
