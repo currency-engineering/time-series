@@ -71,6 +71,10 @@ impl Date for MonthlyDate {
             month: (scale.scale % 12 + 1) as usize,
         }
     }
+
+    fn unit_name() -> &'static str {
+        "month"
+    }
 }
 
 impl From<chrono::NaiveDate> for MonthlyDate {

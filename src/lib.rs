@@ -87,6 +87,9 @@ where
         let nd = chrono::NaiveDate::parse_from_str(fmt, s)?;
         Ok(nd.into())
     }
+
+    /// The name of the unit (in singular) such as "month". Used to format the date.
+    fn unit_name() -> &'static str; 
 }
 
 // We want to control the conversion of a Date into a string, and the conversion of a string into a
@@ -102,6 +105,7 @@ pub struct Duration<D: Date> {
 // === Scale ======================================================================================
 
 /// For example, `Scale<MonthlyDate>` is a scale with markers at each month.
+#[derive(Copy, Clone, Debug)]
 pub struct Scale<D: Date> {
     scale: isize,
     _phantom: PhantomData<D>,
@@ -374,11 +378,12 @@ impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
 // ///
 // /// A `RegularTimeSeries` is guaranteed to have two or more data points.
 // #[derive(Debug)]
-// pub struct RegularTimeSeries<const N: usize> {
+// pub struct RegularTimeSeries<D: Date, const N: usize> {
 //     duration:   Duration, 
-//     ts:         TimeSeries<N>,
+//     range:      DateRange,
+//     ts:         TimeSeries<D, N>,
 // }
-// 
+
 // impl<const N: usize> Serialize for RegularTimeSeries<N> {
 //     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
 //     where
@@ -602,14 +607,14 @@ impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
 //         self.ts.0.last().unwrap().date()
 //     }
 // }
-// 
+
 // /// Specifies the time-span of the data.
 // #[derive(Clone, Copy, Debug, Serialize)]
-// pub struct DateRange {
-//     start_date: Option<MonthlyDate>,
-//     end_date:   Option<MonthlyDate>,
+// pub struct DateRange<D: Date> {
+//     start: Option<Scale<D>>,
+//     end:   Option<Scale<D>>,
 // }
-// 
+
 // impl DateRange {
 // 
 //     /// Place a filter on the range of dates. `None` means no constraint is applied.
