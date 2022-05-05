@@ -330,9 +330,10 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
     }
 }
 
+// The only way to construct a RegularTimeSeries is by try_into() from a TimeSeries, because this
+// checks the length and that durations are uniform.  The general idea is to not change the data
+// and only change the structure pointing in to data.
 
-// The only way to construct a RegularTimeSeries is by try_into() from a
-// TimeSeries, because this checks sufficient length and consistent duration.
 /// An iterator over a `RegularTimeSeries`.
 pub struct RegularTimeSeriesIter<'a, D: Date, const N: usize> {
     start_date: D,
@@ -482,7 +483,7 @@ impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
 //         Ok(self.ts.0[index as usize])
 //     }
 // 
-//     /// Iterate over the data points in a `RegularTimeSeries`.
+//     /// Iterate over some of the data points in a `RegularTimeSeries`.
 //     pub fn iter(&self, date_range: DateRange) -> RegularTimeSeriesIter<N> {
 //         let ts_start_date = self.ts.0[0].date();
 // 
