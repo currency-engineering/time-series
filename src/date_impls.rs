@@ -39,7 +39,7 @@ pub enum Month {
 }
 
 impl Month {
-    fn to_num(&self) -> isize {
+    pub fn to_num(&self) -> isize {
         match self {
             Month::January => 1,
             Month::February => 2,

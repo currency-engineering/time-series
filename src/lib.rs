@@ -1,26 +1,20 @@
 //! The `time-series` crate constrains a data point to an fixed length array of floating point
 //! numbers. Each data point is associated with a date. Dates are unusual in that they map to a
-//! regular scale, so that monthly dates are always evenly separated.
+//! regular scale, so that monthly dates are always evenly separated. Iterator methods can be used
+//! to do transformations on time-series.
 //!
 //! #### Examples
 //!
 //! ```ignore
-//! use std::convert::TryInto;
-//! use std::path::Path;
-//! use time_series::{DateRange, MonthlyDate, RegularTimeSeries, TimeSeries};
+//! use time_series::{MonthlyDate, RegularTimeSeries, TimeSeries};
 //!
 //! // The standard procedure is to create a `TimeSeries` from `csv` data. `
 //! // ::<1> defines the data array to be of length 1.
-//! let ts = TimeSeries::<1>::from_csv("./tests/test.csv".into()).unwrap();
+//! let ts = TimeSeries::<MonthlyDate, 1>::from_csv("./tests/test.csv", "%Y-%m-%d") {
 //!
 //! // And then to convert to a regular time-series with ordered data with regular
 //! // intervals and no missing points.
-//! let rts: RegularTimeSeries::<1> = ts.try_into().unwrap();
-//!
-//! // When we create an iterator we define a range of dates to iterate over, or
-//! // `None, None` for an open range.
-//! let range = DateRange::new(None, Some(MonthlyDate::ym(2013,1)));
-//! let iter = rts.iter(range);
+//! let rts = ts.into_regular(None, Some(MonthlyDate::rm(2013,1)).unwrap();
 //! ```
 
 /// Date implementations. At the moment there is only one - `MonthlyDate`.
@@ -98,8 +92,7 @@ where
 // We want to control the conversion of a Date into a string, and the conversion of a string into a
 // Date by application code. We do this by having a fmt string as an argument. 
 
-/// `Duration<MonthlyDate>` represents an interval on the `Scale<MonthlyDate>` scale. It wraps an
-/// `isize`.
+/// `Duration<MonthlyDate>` represents an interval on the `Scale<MonthlyDate>` scale.
 pub struct Duration<D: Date> {
     delta: isize,
     _phantom: PhantomData<D>,
@@ -107,21 +100,13 @@ pub struct Duration<D: Date> {
 
 // === Scale ======================================================================================
 
-/// For example, `Scale<MonthlyDate>` is a scale with markers at each month.
+/// For example, `Scale<MonthlyDate>` is a scale with markers at each month. Scale is used to
+/// compare two dates, and add or subtract time units.  
 #[derive(Copy, Clone, Debug)]
 pub struct Scale<D: Date> {
     scale: isize,
     _phantom: PhantomData<D>,
 }
-
-// impl<D: Date> Scale<D> {
-//     from_isize(i: isize) -> Self {
-//         Scale {
-//             scale: i,
-//             _phantom: PhantomData<D>,
-//         }
-//     }
-// }
 
 impl<D: Date> Add<isize> for Scale<D> {
     type Output = Self;
@@ -190,6 +175,8 @@ impl<D: Date, const N: usize> DatePoint<D, N> {
     }
 }
 
+// === TimeSeries =================================================================================
+
 /// A time-series with no guarantees of ordering or unique dates, but must have at least one
 /// element. The canonical method to create a time-series is from a csv file using
 /// `TimeSeries::from_csv("/path/to/data.csv", "%Y-%m-%d")`.
@@ -204,12 +191,6 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
 
     fn last(&self) -> DatePoint<D, N> {
         *self.0.last().unwrap()
-    }
-
-    fn first_position(&self, date: &D) -> Option<usize> {
-        let scale = date.to_scale();
-
-        self.0.iter().position(|date_point| date_point.date().to_scale() == scale)
     }
 
     // Having an inner function allows from_csv() to read either from a file of from a string.
@@ -324,21 +305,6 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, None)
     }
 
-    // /// Return the duration between the first and second points.
-    // pub fn first_duration(&self) -> Result<Duration<D>> {
-    //     if self.0.is_empty() { bail!("Time-series is empty.") }
-    //     if self.0.len() == 1 { bail!("Time-series has only one point.") }
-
-    //     let first_date = self.0[0].date;
-    //     let second_date = self.0[1].date;
-
-    //     let duration: Duration<D> = first_date.duration(second_date.to_scale());
-    //     if duration.delta <= 0 {
-    //         bail!(format!("Expected positive duration between {} and {}.", first_date, second_date))
-    //     };
-    //     Ok(duration)
-    // }
-
     // /// Return the maximum of all values at index `n`.
     // pub fn max(&self, n: usize) -> f32 {
     //     self.0.iter()
@@ -391,9 +357,7 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
     }
 }
 
-// The only way to construct a RegularTimeSeries is by try_into() from a TimeSeries, because this
-// checks the length and that durations are uniform.  The general idea is to not change the data
-// and only change the structure pointing in to data.
+// ================================================================================================
 
 /// An iterator over a `RegularTimeSeries`.
 pub struct RegularTimeSeriesIter<'a, D: Date, const N: usize> {
@@ -431,238 +395,17 @@ impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
     }
 }
 
+// ================================================================================================
+
 /// A time-series with regular, contiguous data.
 ///
-/// A `RegularTimeSeries` is guaranteed to have two or more data points.
-#[derive(Debug)]
+/// A `RegularTimeSeries` is guaranteed to have one or more data points.
 pub struct RegularTimeSeries<D: Date, const N: usize> {
     range:      DateRange<D>,
     ts:         TimeSeries<D, N>,
 }
 
-// impl<const N: usize> Serialize for RegularTimeSeries<N> {
-//     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-//     where
-//         S: Serializer,
-//     {
-//         serializer.serialize_newtype_struct("RegularTimeSeries", &self.ts)
-//     }
-// }
-// 
-// impl RegularTimeSeries::<1> {
-// 
-//     /// Consume two `RegularTimeSeries<1>` and return a `RegularTimeSeries<2>` over a tuple of the
-//     /// original values. If the duration of the two time-series' are different then panic. If the
-//     /// result has less than two data points then fail.
-//     pub fn zip_one_one(self, other: RegularTimeSeries<1>) -> Result<RegularTimeSeries<2>> {
-//        
-//         // Each TimeSeries is a Vec of DatePoints. We can therefore just do the checks and use a
-//         // consuming iterator over all the DatePoints.
-// 
-//         if self.duration() != other.duration() {
-//             bail!(
-//                 format!("Expected time-series to have same duration but had [{}] and [{}].",
-//                     self.duration(),
-//                     other.duration(),
-//                 )
-//             )
-//         };
-// 
-//         // Find first and last dates, then create iterators with this date range and zip.
-// 
-//         let first_date = self.first_date().max(other.first_date());  
-//         let last_date = self.last_date().min(other.last_date());
-// 
-//         let date_range = DateRange::new(Some(first_date), Some(last_date));
-// 
-//         let mut v: Vec<DatePoint<2>> = Vec::new();
-// 
-//         for (dp1, dp2) in self.iter(date_range).zip(other.iter(date_range)) {
-// 
-//             // let () = dp1;
-// 
-//             v.push(DatePoint::<2>::new(dp1.date(), [ dp1.value(0), dp2.value(0) ]));
-//         }
-// 
-//         TimeSeries::<2>::new(v).try_into()
-//     }
-// }
-// 
-// 
-// // Constrain a `RegularTimeSeries` in-place with a new date range.
-// impl<const N: usize> RegularTimeSeries<N> {
-//     /// Remove `DatePoints` outside `date_range` from `Self`.
-//     pub fn mut_range(&mut self, date_range: &DateRange) {
-//         let start_date = match date_range.start_date {
-//             None => self.ts.0.first().unwrap().date(),
-//             Some(start) => start,
-//         };
-//         let end_date = match date_range.end_date {
-//             None => self.ts.0.last().unwrap().date(),
-//             Some(end) => end,
-//         };
-//         self.ts.0.retain(|dp| dp.date >= start_date && dp.date <= end_date)
-//     }
-// }
-// 
-// // Return a new `RegularTimeSeries` with a new date range.
-// impl<const N: usize> RegularTimeSeries<N> {
-//     /// Remove `DatePoints` outside `date_range` from `Self`.
-//     pub fn range(&self, date_range: &DateRange) -> RegularTimeSeries<N> {
-//         let start_date = match date_range.start_date {
-//             None => self.ts.0.first().unwrap().date(),
-//             Some(start) => start,
-//         };
-//         let end_date = match date_range.end_date {
-//             None => self.ts.0.last().unwrap().date(),
-//             Some(end) => end,
-//         };
-//         let mut ts = TimeSeries::new(Vec::new());
-//         for dp in self.ts.0.iter() {
-//             if dp.date() >= start_date && dp.date() <= end_date {
-//                 ts.0.push(*dp)
-//             };
-//         }
-//         ts.try_into().unwrap()
-//     }
-// }
-// 
-// impl<const N: usize> RegularTimeSeries<N> {
-// 
-//     /// Return the datapoint for the given date or error if that date is not in `Self`.
-//     pub fn datepoint_from_date(&self, date: MonthlyDate) -> Result<DatePoint::<N>> {
-// 
-//         if date < self.first_date() || date > self.last_date() { 
-//             bail!(format!("Date {:?} not in time-series.", date))
-//         };
-//         let months_delta = date.as_isize() - self.first_date().as_isize();
-//         if months_delta % self.duration.0 != 0 {
-//             bail!(format!("Date {:?} not in time-series.", date))
-//         };
-//         let index = (date.as_isize() - self.first_date().as_isize()) / self.duration.0;
-// 
-//         Ok(self.ts.0[index as usize])
-//     }
-// 
-//     /// Iterate over some of the data points in a `RegularTimeSeries`.
-//     pub fn iter(&self, date_range: DateRange) -> RegularTimeSeriesIter<N> {
-//         let ts_start_date = self.ts.0[0].date();
-// 
-//         let start_date = match date_range.start_date {
-//             None => ts_start_date,
-//             Some(start) => ts_start_date.max(start),
-//         };
-// 
-//         let ts_end_date = *(&(self.ts.0).last().unwrap().date());
-// 
-//         let end_date = match date_range.end_date { 
-//             None => ts_end_date,
-//             Some(end) => ts_end_date.min(end),
-//         };
-// 
-//         RegularTimeSeriesIter {
-//             start_date,
-//             end_date,
-//             date_points: &self.ts.0,
-//             counter: 0,
-//         }
-//     }
-// 
-//     /// Return the duration between points.
-//     pub fn duration(&self) -> Duration {
-//         self.duration
-//     }
-// 
-//     /// Return the first point.
-//     pub fn first(&self) -> Option<DatePoint<N>> {
-//         Some(*self.ts.0.first()?)
-//     }
-// 
-//     /// Return the last point.
-//     pub fn last(&self) -> Option<DatePoint<N>> {
-//         Some(*self.ts.0.last()?)
-//     }
-// 
-//     /// Take the data at index `n`, and use it to construct a monthly
-//     /// time-series from a quarterly time-series, using splines.
-//     pub fn to_monthly(&self, n: usize) -> RegularTimeSeries<1> {
-// 
-//         let x = self.ts.0.iter().map(|dp| dp.date().as_isize() as f64).collect::<Vec<f64>>();
-//         let y = self.ts.0.iter().map(|dp| dp.value(n) as f64).collect::<Vec<f64>>();
-// 
-//         let spline = CubicSpline::from_nodes(x, y);
-// 
-//         let mut v = Vec::new();
-//         for i in self.first_date().as_isize()..=self.last_date().as_isize() {
-//             let dp = DatePoint::<1>::new(MonthlyDate(i), [spline.eval(i as f64) as f32]);
-//             v.push(dp)
-//         };
-//         TimeSeries::new(v).try_into().unwrap()
-//     }
-// 
-//     /// Transform a `RegularTimeSeries` into quarterly data.
-//     pub fn to_quarterly(&self, n: usize) -> RegularTimeSeries<1> {
-// 
-//         let x = self.ts.0.iter().map(|dp| dp.date().as_isize() as f64).collect::<Vec<f64>>();
-//         let y = self.ts.0.iter().map(|dp| dp.value(n) as f64).collect::<Vec<f64>>();
-// 
-//         let spline = CubicSpline::from_nodes(x, y);
-// 
-//         let (add_year, month) = match self.first_date().month_ord() {
-//             1           => (0, 1),
-//             2 | 3 | 4   => (0, 4),
-//             5 | 6 | 7   => (0, 7),
-//             8 | 9 | 10  => (0, 10),
-//             11 | 12     => (1, 1),
-//             _           => panic!(),
-//         };
-// 
-//         let mut date = MonthlyDate::ym(self.first_date().year() + add_year, month);
-// 
-//         let mut v = Vec::new();
-//         while date <= self.last_date() {
-//             let dp = DatePoint::<1>::new(date, [spline.eval(date.as_isize() as f64) as f32]);
-//             v.push(dp);
-//             date = MonthlyDate(date.0 + 3);
-//         };
-//         TimeSeries::new(v).try_into().unwrap()
-//     }
-// 
-//     /// Transform a `RegularTimeSeries` into year-on-year percentage change over the previous year.
-//     pub fn to_year_on_year(&self, n: usize) -> Result<RegularTimeSeries<1>> {
-// 
-//         let mut v = Vec::new();
-//         let mut date = self.first_date();
-//         while let Ok(dp2) = self.datepoint_from_date(date + Duration::year()) {
-//             let dp1 = self.datepoint_from_date(date).unwrap();
-//             let yoy = (dp2.value(0) - dp1.value(n)) * 100.0 / dp1.value(n);
-//             let dp = DatePoint::<1>::new(date + Duration::year(), [yoy]);
-//             v.push(dp);
-//             date = date + self.duration;
-//         }
-//         TimeSeries::new(v).try_into()
-//     }
-// 
-//     /// Return the maximum of all values at index `n`.
-//     pub fn max(&self, n: usize) -> f32 {
-//         self.ts.max(n)
-//     }
-// 
-//     /// Return the minimum of all values.
-//     pub fn min(&self, n: usize) -> f32 {
-//         self.ts.min(n)
-//     }
-// 
-//     /// Return the start date.
-//     pub fn first_date(&self) -> MonthlyDate {
-//         self.ts.0.first().unwrap().date()
-//     }
-// 
-//     /// Return the end date.
-//     pub fn last_date(&self) -> MonthlyDate {
-//         self.ts.0.last().unwrap().date()
-//     }
-// }
+// ================================================================================================
 
 /// An iterable range of dates.
 #[derive(Clone, Copy, Debug)]
@@ -695,6 +438,7 @@ impl<D: Date> IntoIterator for DateRange<D> {
     }
 }
 
+/// Iterator over the dates in a range.
 pub struct DateRangeIter<D: Date> {
     ptr: Scale<D>,
     range: DateRange<D>,
@@ -713,6 +457,17 @@ impl<D: Date> Iterator for DateRangeIter<D> {
         }
     }
 }
+
+// pub impl Transform
+// where
+//     Self: D1: Date,
+//     Self: N1: D2: Date, N1: Const, N2: Const> Transform {
+// 
+//     pub fn from<RegularTransform<D1, N1> for RegularTransform<D2, N2>;
+// 
+// }
+
+// ================================================================================================
 
 //     /// Return the first date.
 //     pub fn first_date(&self) -> Option<MonthlyDate> {
@@ -953,10 +708,7 @@ mod test {
         ).unwrap();
 
         if let Err(e) = ts.check_contiguous_over(&range) {
-            assert_eq!(
-                e.to_string(),
-                "Non-contiguity between lines [1] and [2]",
-            )
+            assert_eq!(e.to_string(), "Non-contiguity between lines [1] and [2]")
         } else { assert!(false) }
     }
 
@@ -981,6 +733,6 @@ mod test {
     fn creating_timeseries_from_csv_should_work() {
         let csv_str = "2020-01-01, 1.2";
         let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
-        assert!(ts.len() == 1);
+        assert_eq!(ts.len(), 1);
     }
 }
