@@ -1,23 +1,50 @@
 //! The `time-series` crate constrains a data point to an fixed length array of floating point
 //! numbers. Each data point is associated with a date. Dates are unusual in that they map to a
-//! regular scale, so that monthly dates are always evenly separated. Iterator methods can be used
-//! to do transformations on time-series.
+//! regular scale, so that monthly dates are always evenly separated.
 //!
-//! #### Examples
+//! #### Building a `RegularTimeSeries` from data
 //!
-//! ```
-//! use time_series::{MonthlyDate, RegularTimeSeries, TimeSeries};
+//! ```no_run
+//! use time_series::{RegularTimeSeries, TimeSeries};
+//! use time_series::date_impls::Monthly;
 //!
 //! // The standard procedure is to create a `TimeSeries` from `csv` data. `
 //! // ::<1> defines the data array to be of length 1.
-//! let ts = TimeSeries::<MonthlyDate, 1>::from_csv("./tests/test.csv", "%Y-%m-%d");
+//! let ts = TimeSeries::<Monthly, 1>::from_csv("./tests/test.csv", "%Y-%m-%d").unwrap();
 //!
 //! // And then to convert to a regular time-series with ordered data with regular
 //! // intervals and no missing points.
-//! let rts = ts.into_regular(None, Some(MonthlyDate::ym(2013,1))).unwrap();
+//! let rts = ts.into_regular(None, Some(Monthly::ym(2013,1))).unwrap();
+//! ```
+//! #### Mapping a `RegularTimeSeries`
+//!
+//! Most of the transformations we want to make on a `RegularTimesSeries` can be done using it as an
+//! iterator and mapping from one `DatePoint` to another.
+//!
+//! ```no_run
+//! let single_column: RegularTimeSeries<Monthly, 1> = regular_time_series
+//!     .iter()
+//!     .map(|datepoint| datepoint.from_column(0))
+//!     .collect();
+//! ```
+//!
+//! #### Changing the time scale.
+//!
+//! When we want to do transformations that change the date scaling, we can break the
+//! `RegularTimeSeries` into columns and then rebuild a new `RegularTimeSeries` from the parts. 
+//!
+//! #### Dates
+//!
+//! Dates that implement the `Date` trait map directly to a `Scale` that maps directly back.
+//! `Scale` wraps an integer and provides ordering, comparison and arithmetic functionality. So
+//! ```no_run
+//! assert_eq!(
+//!     (Monthly::ym(2020,12).to_scale() + 1).from_scale(),
+//!     Monthly::ym(2020,1),
+//! )
 //! ```
 
-/// Date implementations. At the moment there is only one - `MonthlyDate`.
+/// Date implementations. At the moment there is only one - `Monthl`.
 pub mod date_impls;
 
 use anyhow::{
@@ -61,7 +88,6 @@ pub trait Date
 where
     Self: Sized + From<chrono::NaiveDate> + Into<chrono::NaiveDate> + Serialize + Debug + Display + Copy,
 {
-
     /// Associate a number with every `Date` value.
     fn to_scale(&self) -> Scale<Self>;
 
@@ -73,9 +99,6 @@ where
         let nd = chrono::NaiveDate::parse_from_str(fmt, s)?;
         Ok(nd.into())
     }
-
-    /// The name of the unit (in singular) such as "month". Used to format the date.
-    fn unit_name() -> &'static str; 
 }
 
 // We want to control the conversion of a Date into a string, and the conversion of a string into a
@@ -83,7 +106,7 @@ where
 
 // === Scale ======================================================================================
 
-/// For example, `Scale<MonthlyDate>` is a scale with markers at each month. Scale is used to
+/// For example, `Scale<Monthly>`. Scale is used to
 /// compare two dates, and add or subtract time units.  
 #[derive(Copy, Clone, Debug)]
 pub struct Scale<D: Date> {
@@ -400,6 +423,7 @@ impl<D: Date, const N: usize> RegularTimeSeries<D, N> {
     //     Ok(RegularTimeSeries { range, ts: TimeSeries::<D, 1>(data) })
     // }
 
+    /// Returns an iterator over `Self`.
     pub fn iter<'a>(&'a self) -> RegularTimeSeriesIter<'a, D, N> {
         RegularTimeSeriesIter {
             inner_iter: self.range.into_iter(),
@@ -407,10 +431,13 @@ impl<D: Date, const N: usize> RegularTimeSeries<D, N> {
         } 
     }
 
-    /// A helper function that returns new RegularTimeSeries with a single column
-    /// of data selected from `Self`. Column indices start from `0`.
-    pub fn from_column(&self, n: usize) -> RegularTimeSeries<D, 1> {
-        self.iter().map(|dp| dp.from_column(n)).collect()
+    /// Breaks `Self` into raw components. This is useful when building a new `RegularTimeSeries`
+    /// with a different scale.
+    pub fn into_parts<'a>(self) -> (DateRange<D>, Vec<[f32; N]>) {
+        (
+            self.range,
+            self.ts.0.iter().map(|dp| dp.data()).collect(),
+        )
     }
 }
 
@@ -503,20 +530,20 @@ impl<D: Date> Iterator for DateRangeIter<D> {
 // ================================================================================================
 
 //     /// Return the first date.
-//     pub fn first_date(&self) -> Option<MonthlyDate> {
-//         self.start_date.map(|md| MonthlyDate(md.0))
+//     pub fn first_date(&self) -> Option<Monthly> {
+//         self.start_date.map(|md| Monthly(md.0))
 //     }
 // 
 //     /// Return the last date. 
-//     pub fn last_date(&self) -> Option<MonthlyDate> {
-//         self.end_date.map(|md| MonthlyDate(md.0))
+//     pub fn last_date(&self) -> Option<Monthly> {
+//         self.end_date.map(|md| Monthly(md.0))
 //     }
 // }
 // 
 // // pub struct Range {
 // //     ts:         &RegularTimeSeries<N>,
-// //     start_date: MonthlyDate,
-// //     end_date:   MonthlyDate,
+// //     start_date: Monthly,
+// //     end_date:   Monthly,
 // // }
 // 
 
@@ -582,113 +609,22 @@ mod arrays {
     //     deserializer.deserialize_tuple(N, ArrayVisitor::<T, N>(PhantomData))
     // }
 }
-// 
-// mod tests {
-// 
-//     // Private
-//     
-//     // Duration::year
-//     // Duration::new
-//     // Duration::is_not_positive
-//     // Duration::display
-//     
-//     // 
-// 
-//     // MonthlyDate::year
-//     // MonthlyDate::month
-//     // MonthlyDate::month_ord
-//     // MonthlyDate::ym
-//     // MonthyDate into_date
-//     // MonthlyDate ord
-//     // MonthlyDate compare
-//     // MonthlyDate eq
-//     // MonthlyDate serialize
-//     //
-//     // Add Duration to MonthlyDate
-//     // MonthlyDate debug
-//     //
-//     // Datepoint::date
-//     // Datepoint::new
-//     // Datepoint::value
-//     //
-//     // TimeSeries::new
-//     // TimeSeries::push
-//     // TimeSeries::from_csv
-//     // TimeSeries::first_duration
-//     // TimeSeries::max(n)
-//     // TimeSeries::min(n)
-//     //
-//     // RegularTimeSeries from TimeSeries
-//     // RegularTimeSeries::serialize
-//     // RegularTimeSeries::zip_one_one
-//     // RegularTimeSeries::mut_range
-//     // RegularTimeSeries::range
-//     // RegularTimeSeries::datepoint_from_date
-//     // RegularTimeSeries::iter(DateRange)
-//     // RegularTimeSeries::duration
-//     // RegularTimeSeries::last
-//     // RegularTimeSeries::to_monthly
-//     // RegularTimeSeries::to_quarterly
-//     // RegularTimeSeries::to_year_on_year
-//     // RegularTimeSeries::max
-//     // RegularTimeSeries::min
-//     // RegularTimeSeries::first_date
-//     // RegularTimeSeries::last_date
-//     //
-//     // DateRange
-//     //
-//     // RegulatTimeSeriesIter
-// }
-// 
-// 
-// mod test {
-// 
-//     #[test]
-//     fn duration_year_should_have_12_months() {
-//         assert_eq!(Duration::year(), Duration(12));
-//     }
-//     
-//     #[test]
-//     fn durations_should_work_across_year_boundaries() {
-//         assert_eq!(
-//             Duration::new(MonthlyDate::ym(2013, 11), MonthlyDate::ym(2014, 1)),
-//             Duration(2)
-//         )
-//     }
-//     
-//     #[test]
-//     fn durations_can_be_negative() {
-//         assert!(
-//             Duration::new(
-//                 MonthlyDate::ym(2013,4),
-//                 MonthlyDate::ym(2013,1),
-//             )
-//             .is_not_positive()
-//         )
-//     }
-//     
-//     #[test]
-//     fn duration_should_be_displayable() {
-//         assert_eq!(
-//             Duration::new(
-//                 MonthlyDate::ym(2013,4),
-//                 MonthlyDate::ym(2013,1),
-//             ).to_string(),
-//             "-3 months",
-//         )
-//     }
-// }
 
 #[cfg(test)]
 mod test {
     use chrono::{Datelike, NaiveDate};
     use crate::{
-        date_impls::MonthlyDate,
+        Date,
+        date_impls::Monthly,
+        DatePoint,
         DateRange,
         RegularTimeSeries,
+        Scale,
         TimeSeries,
     };
     use indoc::indoc;
+
+    // === Date trait tests =======================================================================
 
     #[test]
     fn division_should_round_down_even_when_numerator_is_negative() {
@@ -702,6 +638,8 @@ mod test {
         assert!(date.year() == 2020);
     }
 
+    // === TimeSeries tests =======================================================================
+
     #[test]
     fn check_contiguous_should_work() {
         let csv_str = indoc! {"
@@ -709,10 +647,10 @@ mod test {
             2020-02-01, 1.3
             2020-03-01, 1.4
         "};
-        let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
+        let ts = TimeSeries::<Monthly, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
         let range = DateRange::new(
-            MonthlyDate::ym(2020,1),
-            MonthlyDate::ym(2020,3),
+            Monthly::ym(2020,1),
+            Monthly::ym(2020,3),
         ).unwrap();
         if let Ok(()) = ts.check_contiguous_over(&range) { assert!(true) } else { assert!(false) }
     }
@@ -723,10 +661,10 @@ mod test {
             2020-01-01, 1.2
             2021-01-01, 1.3
         "};
-        let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
+        let ts = TimeSeries::<Monthly, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
         let range = DateRange::new(
-            MonthlyDate::ym(2020,1),
-            MonthlyDate::ym(2020,3),
+            Monthly::ym(2020,1),
+            Monthly::ym(2020,3),
         ).unwrap();
 
         if let Err(e) = ts.check_contiguous_over(&range) {
@@ -738,7 +676,7 @@ mod test {
     fn from_csv_should_fail_when_wrong_length() {
         let csv_str = "2020-01-01, 1.2";
 
-        if let Err(e) = TimeSeries::<MonthlyDate, 2>::from_csv_str(csv_str, "%Y-%m-%d") {
+        if let Err(e) = TimeSeries::<Monthly, 2>::from_csv_str(csv_str, "%Y-%m-%d") {
             assert_eq!(e.to_string(), "Record length mismatch at line [1]")
         } else { assert!(false) }
     }
@@ -746,7 +684,7 @@ mod test {
     #[test]
     fn timeseries_should_have_at_least_one_element() {
         let csv_str = "";
-        if let Err(e) = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d") {
+        if let Err(e) = TimeSeries::<Monthly, 1>::from_csv_str(csv_str, "%Y-%m-%d") {
             assert_eq!(e.to_string(), "TimeSeries must have at least one element.")
         } else { assert!(false) }
     }
@@ -754,17 +692,39 @@ mod test {
     #[test]
     fn creating_timeseries_from_csv_should_work() {
         let csv_str = "2020-01-01, 1.2";
-        let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
+        let ts = TimeSeries::<Monthly, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
         assert_eq!(ts.len(), 1);
     }
 
+    // #[test]
+    // fn building_timeseries_from_parts_should_work() {
+    //     let date_range = DateRange::new(Monthly::ym(2021, 1), Monthly::ym(2021, 3)).unwrap();
+    //     let data = vec!(1.0, 1.1, 1.2); 
+    //     let ts = RegularTimeSeries::<Monthly, 1>::from_parts(date_range, data).unwrap();
+    //     if let Some(dp) = ts.iter().next() {
+    //         assert_eq!(dp.date(), "2020")
+    //     }
+    // }
+
+    // === DatePoint tests ========================================================================
+
     #[test]
-    fn building_timeseries_from_parts_should_work() {
-        let date_range = DateRange::new(MonthlyDate::ym(2021, 1), MonthlyDate::ym(2021, 3)).unwrap();
-        let data = vec!(1.0, 1.1, 1.2); 
-        let ts = RegularTimeSeries::<MonthlyDate, 1>::from_parts(date_range, data).unwrap();
-        if let Some(dp) = ts.iter().next() {
-            assert_eq!(dp.date(), "2020")
-        }
+    fn from_column_works() {
+        let dp1 = DatePoint::new(Monthly::ym(2020, 1), [1.2, 4.0]);
+        let dp2 = dp1.from_column(0);
+        assert_eq!(dp2.date().to_scale(), Monthly::ym(2020,1).to_scale());
+        assert_eq!(dp2.data(), [1.2]);
+    }
+    
+    // === RegularTimeSeries tests ================================================================
+
+    #[test]
+    fn mapping_a_timeseries_should_work() {
+        let csv_str = indoc! {"
+            2020-01-01, 1.2, 4.0
+            2021-01-01, 1.3, 4.1
+        "};
+        let ts = TimeSeries::<Monthly, 2>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
+        assert_eq!(ts.len(), 2);
     }
 }

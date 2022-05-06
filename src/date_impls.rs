@@ -12,13 +12,13 @@ use std::{
     // path::Path,
 };
 
-// === MonthlyDate ================================================================================
+// === Monthly ====================================================================================
 
 /// A date with monthly granularity or larger.
 ///
-/// Client code is responsible for parsing strings into `MonthlyDate`s.
+/// Client code is responsible for parsing strings into `Monthly`s.
 #[derive(Clone, Copy)]
-pub struct MonthlyDate {
+pub struct Monthly {
     pub year: isize,
     pub month: usize,
 }
@@ -57,40 +57,36 @@ impl Month {
     }
 }
 
-impl Date for MonthlyDate {
-    fn to_scale(&self) -> Scale<MonthlyDate> {
+impl Date for Monthly {
+    fn to_scale(&self) -> Scale<Monthly> {
         Scale {
             scale: (self.year * 12 + (self.month - 1) as isize),
             _phantom: PhantomData,
         }
     }
 
-    fn from_scale(scale: Scale<MonthlyDate>) -> Self {
-        MonthlyDate {
+    fn from_scale(scale: Scale<Monthly>) -> Self {
+        Monthly {
             year: scale.scale.div_euclid(12),
             month: (scale.scale % 12 + 1) as usize,
         }
     }
-
-    fn unit_name() -> &'static str {
-        "month"
-    }
 }
 
-impl From<chrono::NaiveDate> for MonthlyDate {
+impl From<chrono::NaiveDate> for Monthly {
     fn from(nd: chrono::NaiveDate) -> Self {
-        MonthlyDate::ym(nd.year() as isize, nd.month() as usize)
+        Monthly::ym(nd.year() as isize, nd.month() as usize)
     }
 }
 
-impl Into<chrono::NaiveDate> for MonthlyDate {
+impl Into<chrono::NaiveDate> for Monthly {
     fn into(self) -> chrono::NaiveDate {
         chrono::NaiveDate::from_ymd(self.year as i32, self.month as u32, 1)
     }
 }
 
 // Currently only checked for positive inner value.
-impl MonthlyDate {
+impl Monthly {
 
     /// Return the month of a date.
     pub fn month(&self) -> Month {
@@ -113,20 +109,20 @@ impl MonthlyDate {
 
     /// Create a monthly date from a year and month.
     pub fn ym(year: isize, month: usize) -> Self {
-        MonthlyDate {
+        Monthly {
             year,
             month,
         }
     }
 }
 
-impl fmt::Display for MonthlyDate {
+impl fmt::Display for Monthly {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}-{:02}-01", self.year, self.month)
     }
 }
 
-impl Serialize for MonthlyDate {
+impl Serialize for Monthly {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, <S as Serializer>::Error>
     where
         S: Serializer,
@@ -135,9 +131,9 @@ impl Serialize for MonthlyDate {
     }
 }
 
-impl fmt::Debug for MonthlyDate  {
+impl fmt::Debug for Monthly {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MonthlyDate")
+        f.debug_struct("Monthly")
          .field("year", &self.year)
          .field("month", &(self.month))
          .finish()
@@ -149,11 +145,11 @@ pub mod test {
 
     use crate::{
         DateRange,
-        date_impls::MonthlyDate,
+        date_impls::Monthly,
     };
 
     #[test]
     fn creating_daterange_from_monthlydates_should_work() {
-        DateRange::new(MonthlyDate::ym(2020, 1), MonthlyDate::ym(2021, 1));
+        DateRange::new(Monthly::ym(2020, 1), Monthly::ym(2021, 1));
     }
 }
