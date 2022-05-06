@@ -149,39 +149,11 @@ pub mod test {
 
     use crate::{
         DateRange,
-        TimeSeries,
+        date_impls::MonthlyDate,
     };
-    use crate::date_impls::MonthlyDate;
-
-    #[test]
-    fn creating_timeseries_from_csv_should_work() {
-        let csv_str = "2020-01-01, 1.2";
-        let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
-        assert!(ts.len() == 1);
-    }
-
-    #[test]
-    fn timeseries_should_have_at_least_one_element() {
-        let csv_str = "";
-        match TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d") {
-            Ok(_) => assert!(false),
-            Err(e) => assert_eq!(e.to_string(), "TimeSeries must have at least one element."),
-        }
-    }
-
-    #[test]
-    fn from_csv_should_fail_with_wrong_length() {
-        let csv_str = "2020-01-01, 1.2";
-        let _ts = match TimeSeries::<MonthlyDate, 2>::from_csv_str(csv_str, "%Y-%m-%d") {
-            Ok(_) => assert!(false),
-            Err(e) => assert_eq!(e.to_string(), "Record length mismatch at line [1]"),
-        };
-    }
 
     #[test]
     fn creating_daterange_from_monthlydates_should_work() {
-        let date1 = MonthlyDate::ym(2020, 1);
-        let date2 = MonthlyDate::ym(2021, 1);
-        let daterange = DateRange::new(date1, date2);
+        DateRange::new(MonthlyDate::ym(2020, 1), MonthlyDate::ym(2021, 1));
     }
 }
