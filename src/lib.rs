@@ -5,16 +5,16 @@
 //!
 //! #### Examples
 //!
-//! ```ignore
+//! ```
 //! use time_series::{MonthlyDate, RegularTimeSeries, TimeSeries};
 //!
 //! // The standard procedure is to create a `TimeSeries` from `csv` data. `
 //! // ::<1> defines the data array to be of length 1.
-//! let ts = TimeSeries::<MonthlyDate, 1>::from_csv("./tests/test.csv", "%Y-%m-%d") {
+//! let ts = TimeSeries::<MonthlyDate, 1>::from_csv("./tests/test.csv", "%Y-%m-%d");
 //!
 //! // And then to convert to a regular time-series with ordered data with regular
 //! // intervals and no missing points.
-//! let rts = ts.into_regular(None, Some(MonthlyDate::rm(2013,1)).unwrap();
+//! let rts = ts.into_regular(None, Some(MonthlyDate::ym(2013,1))).unwrap();
 //! ```
 
 /// Date implementations. At the moment there is only one - `MonthlyDate`.
@@ -154,7 +154,7 @@ impl<D: Date, const N: usize> DatePoint<D, N> {
     }
 
     /// Return the value at column index.
-    pub fn column(&self, column: usize) -> DatePoint<D, 1> {
+    pub fn from_column(&self, column: usize) -> DatePoint<D, 1> {
         DatePoint {
             date: self.date,
             data: [self.data[column]]
@@ -385,20 +385,20 @@ pub struct RegularTimeSeries<D: Date, const N: usize> {
 
 impl<D: Date, const N: usize> RegularTimeSeries<D, N> {
 
-    // Construct a time-series from a `DateRange` and a `Vec<f32>`.
-    fn from_parts(range: DateRange<D>, data: Vec<f32>) -> Result<RegularTimeSeries<D, 1>> {
+    // // Construct a time-series from a `DateRange` and a `Vec<f32>`.
+    // fn from_column(range: DateRange<D>, data: Vec<f32>) -> Result<RegularTimeSeries<D, 1>> {
 
-        if range.duration().abs() as usize !=  data.len() - 1 {
-            bail!("Date range and number of DataPoints do not agree.")
-        }
+    //     if range.duration().abs() as usize !=  data.len() - 1 {
+    //         bail!("Date range and number of DataPoints do not agree.")
+    //     }
 
-        let data = range.into_iter()
-            .zip(data.iter())
-            .map(|(date, &data)| DatePoint::new(date, [data]))
-            .collect::<Vec<DatePoint<D, 1>>>();
+    //     let data = range.into_iter()
+    //         .zip(data.iter())
+    //         .map(|(date, &data)| DatePoint::new(date, [data]))
+    //         .collect::<Vec<DatePoint<D, 1>>>();
 
-        Ok(RegularTimeSeries { range, ts: TimeSeries::<D, 1>(data) })
-    }
+    //     Ok(RegularTimeSeries { range, ts: TimeSeries::<D, 1>(data) })
+    // }
 
     pub fn iter<'a>(&'a self) -> RegularTimeSeriesIter<'a, D, N> {
         RegularTimeSeriesIter {
@@ -407,20 +407,32 @@ impl<D: Date, const N: usize> RegularTimeSeries<D, N> {
         } 
     }
 
-    fn column(&self, n: usize) -> RegularTimeSeries<D, 1> {
-        self.iter().map(|dp| dp.column(n)).collect()
+    /// A helper function that returns new RegularTimeSeries with a single column
+    /// of data selected from `Self`. Column indices start from `0`.
+    pub fn from_column(&self, n: usize) -> RegularTimeSeries<D, 1> {
+        self.iter().map(|dp| dp.from_column(n)).collect()
     }
 }
 
-// impl<D: Date, const N: usize> FromIterator<Item = DatePoint<D, N>> for RegularTimeSeries<D, N> {
-//     from_iter<T>(iter: T) -> Self
-//     where
-//         T: IntoIterator<Item = DatePoint<D, N>>
-//     {
-// 
-// 
-//     }
-// }
+impl<D: Date, const N: usize> FromIterator<DatePoint<D, N>> for RegularTimeSeries<D, N> {
+    fn from_iter<T>(iter: T) -> Self
+    where
+        T: IntoIterator<Item = DatePoint<D, N>>
+    {
+        let data: Vec<DatePoint<D, N>> = iter.into_iter().collect();
+
+        // This range is always from an iterator, which must be ordered, and so the unwrap()s can
+        // be called on it.
+        let start_date = data.first().unwrap().date();
+        let end_date = data.last().unwrap().date();
+        let range = DateRange::new(start_date, end_date).unwrap();
+
+        Self {
+            range,
+            ts: TimeSeries::<D, N>(data)
+        }
+    }
+}
 
 // ================================================================================================
 
