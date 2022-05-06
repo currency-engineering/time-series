@@ -73,7 +73,18 @@ where
 
     /// Give an `Scale`, return its associated `Date`.
     fn from_scale(scale: Scale<Self>) -> Self;
-    
+
+    // Do we need this?
+    //
+    // /// Return the duration between two markers on a scale. The value can be position, zero, or
+    // /// negiative.
+    // fn duration(&self, scale2: Scale<Self>) -> Duration<Self> {
+    //     Duration::<Self> {
+    //         delta: scale2.scale - self.to_scale().scale,
+    //         _phantom: PhantomData, 
+    //     }  
+    // }
+
     /// Parse a `Date` from a string, given a format string.
     fn parse_from_str(fmt: &str, s: &str) -> Result<Self> {
         let nd = chrono::NaiveDate::parse_from_str(fmt, s)?;
@@ -152,7 +163,6 @@ impl<D: Date> PartialEq for Scale<D> {
 
 impl<D: Date> Eq for Scale<D> {}
 
-
 // === DatePoint ==================================================================================
 
 /// A `Date` associated with a fixed length array of `f32`s.
@@ -202,15 +212,15 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         self.0.iter().position(|date_point| date_point.date().to_scale() == scale)
     }
 
-
     // Having an inner function allows from_csv() to read either from a file of from a string.
     // The `path_str` argument contains the file name if it exists, for error messages.
     //
-    fn from_csv_inner<R: Read>(mut rdr: Reader<R> , date_fmt: &str, opt_path_str: Option<&str>) -> Result<Self> {
-
+    fn from_csv_inner<R: Read>(
+        mut rdr: Reader<R>,
+        date_fmt: &str,
+        opt_path_str: Option<&str>) -> Result<Self> 
+    {
         let mut acc: Vec<DatePoint<D, N>> = Vec::new();
-
-        // rdr doesn't impl Debug
 
         // Iterate over lines of csv
         for result_record in rdr.records() {
@@ -253,7 +263,6 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         if acc.is_empty() {
             bail!("TimeSeries must have at least one element.")
         }
-
         Ok(TimeSeries(acc))
     }
 
@@ -655,7 +664,7 @@ pub struct RegularTimeSeries<D: Date, const N: usize> {
 //     }
 // }
 
-/// An iterable range of date.
+/// An iterable range of dates.
 #[derive(Clone, Copy, Debug)]
 pub struct DateRange<D: Date>{
     start: Scale<D>,
@@ -665,10 +674,8 @@ pub struct DateRange<D: Date>{
 impl<D: Date> DateRange<D> {
 
     pub fn new(start_date: D, end_date: D) -> Result<Self> {
-
         let start = start_date.to_scale();
         let end = end_date.to_scale();
-
         if start > end {
             bail!("Start date [{}] is later than end date [{}]", start_date, end_date)
         }
@@ -899,6 +906,12 @@ mod arrays {
 #[cfg(test)]
 mod test {
     use chrono::{Datelike, NaiveDate};
+    use crate::{
+        date_impls::MonthlyDate,
+        DateRange,
+        TimeSeries,
+    };
+    use indoc::indoc;
 
     #[test]
     fn division_should_round_down_even_when_numerator_is_negative() {
@@ -913,7 +926,17 @@ mod test {
     }
 
     #[test]
-    fn check_contiguous_over() {
-        assert!(false)
+    fn check_contiguous_should_work() {
+        let csv_str = indoc! {"
+            2020-01-01, 1.2
+            2020-02-01, 1.3
+            2020-03-01, 1.4
+        "};
+        let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
+        let range = DateRange::new(
+            MonthlyDate::ym(2020,1),
+            MonthlyDate::ym(2020,3),
+        ).unwrap();
+        if let Ok(()) = ts.check_contiguous_over(&range) { assert!(true) } else { assert!(false) }
     }
 }

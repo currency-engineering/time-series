@@ -163,8 +163,10 @@ pub mod test {
     #[test]
     fn timeseries_should_have_at_least_one_element() {
         let csv_str = "";
-        let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
-        assert!(false);
+        match TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d") {
+            Ok(_) => assert!(false),
+            Err(e) => assert_eq!(e.to_string(), "TimeSeries must have at least one element."),
+        }
     }
 
     #[test]
