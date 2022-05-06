@@ -68,17 +68,6 @@ where
     /// Give an `Scale`, return its associated `Date`.
     fn from_scale(scale: Scale<Self>) -> Self;
 
-    // Do we need this?
-    //
-    // /// Return the duration between two markers on a scale. The value can be position, zero, or
-    // /// negiative.
-    // fn duration(&self, scale2: Scale<Self>) -> Duration<Self> {
-    //     Duration::<Self> {
-    //         delta: scale2.scale - self.to_scale().scale,
-    //         _phantom: PhantomData, 
-    //     }  
-    // }
-
     /// Parse a `Date` from a string, given a format string.
     fn parse_from_str(fmt: &str, s: &str) -> Result<Self> {
         let nd = chrono::NaiveDate::parse_from_str(fmt, s)?;
@@ -92,12 +81,6 @@ where
 // We want to control the conversion of a Date into a string, and the conversion of a string into a
 // Date by application code. We do this by having a fmt string as an argument. 
 
-/// `Duration<MonthlyDate>` represents an interval on the `Scale<MonthlyDate>` scale.
-pub struct Duration<D: Date> {
-    delta: isize,
-    _phantom: PhantomData<D>,
-}
-
 // === Scale ======================================================================================
 
 /// For example, `Scale<MonthlyDate>` is a scale with markers at each month. Scale is used to
@@ -106,6 +89,12 @@ pub struct Duration<D: Date> {
 pub struct Scale<D: Date> {
     scale: isize,
     _phantom: PhantomData<D>,
+}
+
+impl<D: Date> Scale<D> {
+    fn inner(&self) -> isize {
+        self.scale
+    }
 }
 
 impl<D: Date> Add<isize> for Scale<D> {
@@ -155,23 +144,31 @@ impl<D: Date> Eq for Scale<D> {}
 pub struct DatePoint<D: Date, const N: usize> {
     pub date: D,
     #[serde(with = "arrays")]
-    value: [f32; N],
+    data: [f32; N],
 }
 
 impl<D: Date, const N: usize> DatePoint<D, N> {
     /// Create a new datepoint.
-    pub fn new(date: D, value: [f32; N]) -> DatePoint<D, N> {
-        DatePoint {date, value}
+    pub fn new(date: D, data: [f32; N]) -> DatePoint<D, N> {
+        DatePoint {date, data}
     }
 
     /// Return the value at column index.
-    pub fn value(&self, column: usize) -> f32 {
-        self.value[column]
+    pub fn column(&self, column: usize) -> DatePoint<D, 1> {
+        DatePoint {
+            date: self.date,
+            data: [self.data[column]]
+        }
     }
 
     /// Return the date of a `DatePoint`.
     pub fn date(&self) -> D {
         self.date
+    }
+
+    /// Return an array of data without the date.
+    pub fn data(&self) -> [f32; N] {
+        self.data
     }
 }
 
@@ -357,48 +354,26 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
     }
 }
 
-// ================================================================================================
+// === RegularTimeSeriesIter ======================================================================
 
 /// An iterator over a `RegularTimeSeries`.
 pub struct RegularTimeSeriesIter<'a, D: Date, const N: usize> {
-    start_date: D,
-    end_date: D,
+    inner_iter: DateRangeIter<D>,
     date_points: &'a Vec<DatePoint<D, N>>,
-    counter: usize,
 }
 
 impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
     type Item = DatePoint<D, N>;
 
     fn next(&mut self) -> Option<Self::Item> {
-
-        // Beyond the end of self.date_points.
-        if self.counter >= self.date_points.len() {
-            None
-        } else {
-
-            // Counter points into self.date_points and before start date.
-            if self.date_points[self.counter].date.to_scale() < self.start_date.to_scale() {
-                self.counter += 1;
-                self.next()
-
-            // Counter points into self.date_points but past end date.
-            } else if self.date_points[self.counter].date.to_scale() > self.end_date.to_scale() {
-                return None
-
-            // Counter points into self.date_points and inside range.
-            } else {
-                self.counter += 1;
-                return Some(self.date_points[self.counter - 1])
-            }
+        match (&mut self.inner_iter).enumerate().next() {
+            Some(i) => Some(self.date_points[i.0]),
+            None => None,
         }
     }
 }
 
-
-// 
-
-// ================================================================================================
+// === RegularTimeSeries ==========================================================================
 
 /// A time-series with regular, contiguous data.
 ///
@@ -407,6 +382,45 @@ pub struct RegularTimeSeries<D: Date, const N: usize> {
     range:  DateRange<D>,
     ts:     TimeSeries<D, N>,
 }
+
+impl<D: Date, const N: usize> RegularTimeSeries<D, N> {
+
+    // Construct a time-series from a `DateRange` and a `Vec<f32>`.
+    fn from_parts(range: DateRange<D>, data: Vec<f32>) -> Result<RegularTimeSeries<D, 1>> {
+
+        if range.duration().abs() as usize !=  data.len() - 1 {
+            bail!("Date range and number of DataPoints do not agree.")
+        }
+
+        let data = range.into_iter()
+            .zip(data.iter())
+            .map(|(date, &data)| DatePoint::new(date, [data]))
+            .collect::<Vec<DatePoint<D, 1>>>();
+
+        Ok(RegularTimeSeries { range, ts: TimeSeries::<D, 1>(data) })
+    }
+
+    pub fn iter<'a>(&'a self) -> RegularTimeSeriesIter<'a, D, N> {
+        RegularTimeSeriesIter {
+            inner_iter: self.range.into_iter(),
+            date_points: &self.ts.0,
+        } 
+    }
+
+    fn column(&self, n: usize) -> RegularTimeSeries<D, 1> {
+        self.iter().map(|dp| dp.column(n)).collect()
+    }
+}
+
+// impl<D: Date, const N: usize> FromIterator<Item = DatePoint<D, N>> for RegularTimeSeries<D, N> {
+//     from_iter<T>(iter: T) -> Self
+//     where
+//         T: IntoIterator<Item = DatePoint<D, N>>
+//     {
+// 
+// 
+//     }
+// }
 
 // ================================================================================================
 
@@ -427,6 +441,10 @@ impl<D: Date> DateRange<D> {
         }
         Ok(DateRange { start, end })
     }
+
+    pub fn duration(&self) -> isize {
+        self.end.inner() - self.start.inner()
+    }
 }
 
 impl<D: Date> IntoIterator for DateRange<D> {
@@ -435,7 +453,7 @@ impl<D: Date> IntoIterator for DateRange<D> {
 
     fn into_iter(self) -> Self::IntoIter {
         DateRangeIter {
-            ptr: self.start,
+            count: self.start,
             range: self,
         }
     }
@@ -443,7 +461,7 @@ impl<D: Date> IntoIterator for DateRange<D> {
 
 /// Iterator over the dates in a range.
 pub struct DateRangeIter<D: Date> {
-    ptr: Scale<D>,
+    count: Scale<D>,
     range: DateRange<D>,
 }
 
@@ -451,9 +469,9 @@ impl<D: Date> Iterator for DateRangeIter<D> {
     type Item = D;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.ptr <= self.range.end {
-            let date = Date::from_scale(self.ptr);
-            self.ptr = self.ptr + 1;
+        if self.count <= self.range.end {
+            let date = Date::from_scale(self.count);
+            self.count = self.count + 1;
             Some(date)
         } else {
             None
@@ -489,18 +507,6 @@ impl<D: Date> Iterator for DateRangeIter<D> {
 // //     end_date:   MonthlyDate,
 // // }
 // 
-
-// This shouldn't be used.
-// impl<const N: usize> TryFrom<TimeSeries<N>> for RegularTimeSeries<N> {
-//     type Error = Error;
-// 
-//     fn try_from(ts: TimeSeries<N>) -> std::result::Result<Self, Self::Error> {
-// 
-//         // This will fail if self has less that 2 datapoints.
-//         let duration = ts.first_duration()?;
-//         Ok(RegularTimeSeries::<N> { duration, ts })
-//     }
-// }
 
 // https://github.com/serde-rs/serde/issues/1937
 
@@ -667,6 +673,7 @@ mod test {
     use crate::{
         date_impls::MonthlyDate,
         DateRange,
+        RegularTimeSeries,
         TimeSeries,
     };
     use indoc::indoc;
@@ -737,5 +744,15 @@ mod test {
         let csv_str = "2020-01-01, 1.2";
         let ts = TimeSeries::<MonthlyDate, 1>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
         assert_eq!(ts.len(), 1);
+    }
+
+    #[test]
+    fn building_timeseries_from_parts_should_work() {
+        let date_range = DateRange::new(MonthlyDate::ym(2021, 1), MonthlyDate::ym(2021, 3)).unwrap();
+        let data = vec!(1.0, 1.1, 1.2); 
+        let ts = RegularTimeSeries::<MonthlyDate, 1>::from_parts(date_range, data).unwrap();
+        if let Some(dp) = ts.iter().next() {
+            assert_eq!(dp.date(), "2020")
+        }
     }
 }
