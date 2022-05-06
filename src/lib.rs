@@ -395,14 +395,17 @@ impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
     }
 }
 
+
+// 
+
 // ================================================================================================
 
 /// A time-series with regular, contiguous data.
 ///
 /// A `RegularTimeSeries` is guaranteed to have one or more data points.
 pub struct RegularTimeSeries<D: Date, const N: usize> {
-    range:      DateRange<D>,
-    ts:         TimeSeries<D, N>,
+    range:  DateRange<D>,
+    ts:     TimeSeries<D, N>,
 }
 
 // ================================================================================================
