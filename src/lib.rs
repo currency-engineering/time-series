@@ -81,7 +81,7 @@ fn csv_error_msg(msg: &str, position: Option<&Position>, opt_path_str: Option<&s
     }
 }
 
-// ================================================================================================
+// === Date trait =================================================================================
 
 //  TODO: This should also implement Serialize
 /// A `Date` can best be thought of as a time_scale, with a pointer to one of the marks on the
@@ -211,11 +211,11 @@ pub struct TimeSeries<D: Date, const N: usize>(Vec<DatePoint<D, N>>);
 
 impl<D: Date, const N: usize> TimeSeries<D, N> {
 
-    fn first(&self) -> DatePoint<D, N> {
+    fn first_datepoint(&self) -> DatePoint<D, N> {
         *self.0.first().unwrap()
     }
 
-    fn last(&self) -> DatePoint<D, N> {
+    fn last_datepoint(&self) -> DatePoint<D, N> {
         *self.0.last().unwrap()
     }
 
@@ -357,8 +357,8 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         end_date: Option<D>) -> Result<RegularTimeSeries<D, N>>
     {
         let range = DateRange::new(
-            start_date.unwrap_or(self.first().date()),
-            end_date.unwrap_or(self.last().date()),
+            start_date.unwrap_or(self.first_datepoint().date()),
+            end_date.unwrap_or(self.last_datepoint().date()),
         )?;
 
         self.check_contiguous_over(&range)?;
@@ -501,7 +501,7 @@ impl<D: Date, const N: usize> FromIterator<DatePoint<D, N>> for TimeSeries<D, N>
     }
 }
 
-// ================================================================================================
+// === DateRange ==================================================================================
 
 /// An iterable range of dates.
 #[derive(Clone, Copy, Debug)]
@@ -565,35 +565,6 @@ impl<D: Date> Iterator for DateRangeIter<D> {
         }
     }
 }
-
-// pub impl Transform
-// where
-//     Self: D1: Date,
-//     Self: N1: D2: Date, N1: Const, N2: Const> Transform {
-// 
-//     pub fn from<RegularTransform<D1, N1> for RegularTransform<D2, N2>;
-// 
-// }
-
-// ================================================================================================
-
-//     /// Return the first date.
-//     pub fn first_date(&self) -> Option<Monthly> {
-//         self.start_date.map(|md| Monthly(md.0))
-//     }
-// 
-//     /// Return the last date. 
-//     pub fn last_date(&self) -> Option<Monthly> {
-//         self.end_date.map(|md| Monthly(md.0))
-//     }
-// }
-// 
-// // pub struct Range {
-// //     ts:         &RegularTimeSeries<N>,
-// //     start_date: Monthly,
-// //     end_date:   Monthly,
-// // }
-// 
 
 // https://github.com/serde-rs/serde/issues/1937
 
