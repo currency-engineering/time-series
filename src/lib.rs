@@ -215,9 +215,9 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         *self.0.last().unwrap()
     }
 
-    // Having an inner function allows from_csv() to read either from a file of from a string.
-    // The `path_str` argument contains the file name if it exists, for error messages.
-    //
+    // Having an inner function allows from_csv() to read either from a file of from a string, or
+    // to build a customized csv reader. The `opt_path_str` argument contains the file name if it
+    // exists, for error messages.
     fn from_csv_inner<R: Read>(
         mut rdr: Reader<R>,
         date_fmt: &str,
