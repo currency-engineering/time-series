@@ -27,7 +27,7 @@
 //! let single_column: RegularTimeSeries<Monthly, 1> = regular_time_series
 //!     .iter()
 //!     .map(|datepoint| datepoint.from_column(0))
-//!     .collect()
+//!     .collect::<TimeSeries<D, N>>()
 //!     .into_regular(None, None).unwrap();
 //! ```
 //!
@@ -57,7 +57,6 @@ use anyhow::{
     Result,
 };
 use csv::{Position, Reader, ReaderBuilder, Trim};
-// use peroxide::numerical::spline::CubicSpline;
 use serde::{ Serialize }; // Serializer
 use std::{
     cmp::{min, max, Ordering},
@@ -331,20 +330,6 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, None)
     }
 
-    // /// Return the maximum of all values at index `n`.
-    // pub fn max(&self, n: usize) -> f32 {
-    //     self.0.iter()
-    //         .map(|dp| dp.value(n))
-    //         .fold(f32::NEG_INFINITY, |a, b| a.max(b))
-    // }
-
-    // /// Return the minimum of all values at index `n`.
-    // pub fn min(&self, n: usize) -> f32 {
-    //     self.0.iter()
-    //         .map(|dp| dp.value(n))
-    //         .fold(f32::INFINITY, |a, b| a.min(b))
-    // }
-
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -436,21 +421,6 @@ pub struct RegularTimeSeries<D: Date, const N: usize> {
 
 impl<D: Date, const N: usize> RegularTimeSeries<D, N> {
 
-    // // Construct a time-series from a `DateRange` and a `Vec<f32>`.
-    // fn from_column(range: DateRange<D>, data: Vec<f32>) -> Result<RegularTimeSeries<D, 1>> {
-
-    //     if range.duration().abs() as usize !=  data.len() - 1 {
-    //         bail!("Date range and number of DataPoints do not agree.")
-    //     }
-
-    //     let data = range.into_iter()
-    //         .zip(data.iter())
-    //         .map(|(date, &data)| DatePoint::new(date, [data]))
-    //         .collect::<Vec<DatePoint<D, 1>>>();
-
-    //     Ok(RegularTimeSeries { range, ts: TimeSeries::<D, 1>(data) })
-    // }
-
     /// Returns an iterator over `Self`.
     pub fn iter<'a>(&'a self) -> RegularTimeSeriesIter<'a, D, N> {
         RegularTimeSeriesIter {
@@ -489,6 +459,18 @@ impl<D: Date, const N: usize> RegularTimeSeries<D, N> {
             self.range,
             self.ts.0.iter().map(|dp| dp.data()).collect(),
         )
+    }
+
+    /// Build a `RegularTimeSeries` from a range of dates and data.
+    pub fn from_parts(range: DateRange<D>, data: Vec<[f32; N]>) -> Result<Self> {
+        if range.duration() + 1 != data.len() as isize {
+            bail!("The range of dates and the length of the data do not agree.")
+        };
+        range.into_iter()
+            .zip(data.iter())
+            .map(|(date, &data)| DatePoint::new(date, data))
+            .collect::<TimeSeries<D, N>>()
+            .into_regular(None, None)
     }
 }
 
