@@ -103,9 +103,6 @@ where
     }
 }
 
-// We want to control the conversion of a Date into a string, and the conversion of a string into a
-// Date by application code. We do this by having a fmt string as an argument. 
-
 // === Scale ======================================================================================
 
 /// For example, `Scale<Monthly>`. Scale is used to
@@ -434,15 +431,13 @@ impl<D: Date, const N: usize> RegularTimeSeries<D, N> {
         &'a self,
         other: &'b RegularTimeSeries<D, N2>) -> ZipIter<'a, 'b, D, N, N2>
     {
+        // The offsets are guaranteed to be positive due to the common() fn, and so can be
+        // unwrapped.
         let date_range = self.range.common(&other.range);
-        // These are guaranteed to be positive (due to the conditions of the common()) and so can
-        // be unwrapped.
         let offset1: usize = (self.range.start.inner() - date_range.start.inner())
             .try_into().unwrap();
-
         let offset2: usize = (other.range.start.inner() - date_range.start.inner())
             .try_into().unwrap();
-
         ZipIter {
             inner_iter: date_range.into_iter(), 
             offset1,
@@ -614,15 +609,8 @@ mod arrays {
 #[cfg(test)]
 mod test {
     use chrono::{Datelike, NaiveDate};
-    use crate::{
-        Date,
-        date_impls::Monthly,
-        DatePoint,
-        DateRange,
-        RegularTimeSeries,
-        Scale,
-        TimeSeries,
-    };
+    use crate::*;
+    use crate::date_impls::Monthly;
     use indoc::indoc;
 
     // === Date trait tests =======================================================================
