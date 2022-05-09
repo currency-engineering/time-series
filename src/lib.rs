@@ -368,6 +368,7 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
 // === RegularTimeSeriesIter ======================================================================
 
 /// An iterator over a `RegularTimeSeries`.
+#[derive(Debug)]
 pub struct RegularTimeSeriesIter<'a, D: Date, const N: usize> {
     inner_iter: DateRangeIter<D>,
     date_points: &'a Vec<DatePoint<D, N>>,
@@ -523,7 +524,10 @@ impl<D: Date> IntoIterator for DateRange<D> {
     }
 }
 
+// === DateRangeIter ==============================================================================
+
 /// Iterator over the dates in a range.
+#[derive(Debug)]
 pub struct DateRangeIter<D: Date> {
     count: Scale<D>,
     range: DateRange<D>,
