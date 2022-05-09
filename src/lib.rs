@@ -365,53 +365,12 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
     }
 }
 
-// === RegularTimeSeriesIter ======================================================================
-
-/// An iterator over a `RegularTimeSeries`.
-#[derive(Debug)]
-pub struct RegularTimeSeriesIter<'a, D: Date, const N: usize> {
-    inner_iter: DateRangeIter<D>,
-    date_points: &'a Vec<DatePoint<D, N>>,
-}
-
-impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
-    type Item = DatePoint<D, N>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match (&mut self.inner_iter).enumerate().next() {
-            Some(i) => Some(self.date_points[i.0]),
-            None => None,
-        }
-    }
-}
-
-// === ZipIter ======================================================================
-
-/// An iterator over the common dates of two `RegularTimeSeries`.
-pub struct ZipIter<'a, 'b, D: Date, const N: usize, const N2: usize> {
-    inner_iter: DateRangeIter<D>,
-    offset1: usize,
-    offset2: usize,
-    date_points1: &'a Vec<DatePoint<D, N>>,
-    date_points2: &'b Vec<DatePoint<D, N2>>,
-}
-
-impl<'a, 'b, D: Date, const N: usize, const N2: usize> Iterator for ZipIter<'a, 'b, D, N, N2> {
-    type Item = (DatePoint<D, N>, DatePoint<D, N2>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match (&mut self.inner_iter).enumerate().next() {
-            Some(i) => Some((self.date_points1[i.0 + self.offset1], self.date_points2[i.0 + self.offset2])),
-            None => None,
-        }
-    }
-}
-
 // === RegularTimeSeries ==========================================================================
 
 /// A time-series with regular, contiguous data and at least one data point.
 ///
 /// A `RegularTimeSeries` is guaranteed to have one or more data points.
+#[derive(Debug)]
 pub struct RegularTimeSeries<D: Date, const N: usize> {
     range:  DateRange<D>,
     ts:     TimeSeries<D, N>,
@@ -478,6 +437,50 @@ impl<D: Date, const N: usize> FromIterator<DatePoint<D, N>> for TimeSeries<D, N>
         Self(iter.into_iter().collect())
     }
 }
+
+// === RegularTimeSeriesIter ======================================================================
+
+/// An iterator over a `RegularTimeSeries`.
+#[derive(Debug)]
+pub struct RegularTimeSeriesIter<'a, D: Date, const N: usize> {
+    inner_iter: DateRangeIter<D>,
+    date_points: &'a Vec<DatePoint<D, N>>,
+}
+
+impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
+    type Item = DatePoint<D, N>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match (&mut self.inner_iter).enumerate().next() {
+            Some(i) => Some(self.date_points[i.0]),
+            None => None,
+        }
+    }
+}
+
+// === ZipIter ======================================================================
+
+/// An iterator over the common dates of two `RegularTimeSeries`.
+#[derive(Debug)]
+pub struct ZipIter<'a, 'b, D: Date, const N: usize, const N2: usize> {
+    inner_iter: DateRangeIter<D>,
+    offset1: usize,
+    offset2: usize,
+    date_points1: &'a Vec<DatePoint<D, N>>,
+    date_points2: &'b Vec<DatePoint<D, N2>>,
+}
+
+impl<'a, 'b, D: Date, const N: usize, const N2: usize> Iterator for ZipIter<'a, 'b, D, N, N2> {
+    type Item = (DatePoint<D, N>, DatePoint<D, N2>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match (&mut self.inner_iter).enumerate().next() {
+            Some(i) => Some((self.date_points1[i.0 + self.offset1], self.date_points2[i.0 + self.offset2])),
+            None => None,
+        }
+    }
+}
+
 
 // === DateRange ==================================================================================
 
