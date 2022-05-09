@@ -107,7 +107,7 @@ where
 
 /// For example, `Scale<Monthly>`. Scale is used to
 /// compare two dates, and add or subtract time units.  
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize)]
 pub struct Scale<D: Date> {
     scale: isize,
     _phantom: PhantomData<D>,
@@ -370,7 +370,7 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
 /// A time-series with regular, contiguous data and at least one data point.
 ///
 /// A `RegularTimeSeries` is guaranteed to have one or more data points.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct RegularTimeSeries<D: Date, const N: usize> {
     range:  DateRange<D>,
     ts:     TimeSeries<D, N>,
@@ -485,7 +485,7 @@ impl<'a, 'b, D: Date, const N: usize, const N2: usize> Iterator for ZipIter<'a, 
 // === DateRange ==================================================================================
 
 /// An iterable range of dates.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize)]
 pub struct DateRange<D: Date>{
     start: Scale<D>,
     end: Scale<D>
