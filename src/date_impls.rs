@@ -140,6 +140,27 @@ impl fmt::Debug for Monthly {
     }
 }
 
+
+
+// // === Quarterly ===
+// 
+// trait FromScale<Scale<A>> for Scale<B>
+// where
+//     A: Date,
+//     B: Date,
+// {
+//     pub fn from_scale(i32) -> i32;
+// 
+//     pub fn from(scale: Scale<A>) -> Self {
+//         Scale {
+//             scale: from(scale.inner()),
+//             _phantom: PhantomData,
+//         }
+//     }
+// }
+// 
+// impl FromScale<Scale<Quarterly>> for Scale<Monthly> {
+
 #[cfg(test)]
 pub mod test {
 
