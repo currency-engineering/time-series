@@ -1,6 +1,6 @@
-//! The `time-series` crate constrains a data point to an fixed length array of floating point
-//! numbers. Each data point is associated with a date. Dates are unusual in that they map to a
-//! regular scale, so that monthly dates are always evenly separated.
+//! The `time-series` crate is an abstraction of dates associated with data. Dates are unusual in
+//! that they map to a regular scale, so that monthly dates are always evenly separated. Data is
+//! any type that is UTF-8 and can be read as CSV record.
 //!
 //! #### Building a `RegularTimeSeries` from data
 //!
@@ -47,8 +47,9 @@
 //! )
 //! ```
 
-/// Date implementations. At the moment there is only one - `Monthly`.
-pub mod date_impls;
+/// Some common [`Date`](trait.Date.html), Transform, and
+/// [`TryFrom<StringRecord>`](trait.TryFrom.html) implementations.
+pub mod impls;
 
 use anyhow::{
     anyhow,
@@ -57,9 +58,12 @@ use anyhow::{
     Result,
 };
 use csv::{Position, Reader, ReaderBuilder, Trim};
-use serde::{ Serialize }; // Serializer
+use serde::{
+    Serialize,
+};
 use std::{
     cmp::{min, max, Ordering},
+    error::Error as StdError,
     ffi::OsStr,
     fmt::{Debug, Display},
     io::Read,
@@ -167,24 +171,23 @@ impl<D: Date> Eq for Scale<D> {}
 
 /// A `Date` associated with a fixed length array of `f32`s.
 #[derive(Clone, Copy, Debug, Serialize)]
-pub struct DatePoint<D: Date, const N: usize> {
+pub struct DatePoint<D, V>
+where
+    D: Date,
+    V: TryFrom<StringRecord> + Copy,
+{
     pub date: D,
-    #[serde(with = "arrays")]
-    data: [f32; N],
+    data: V,
 }
 
-impl<D: Date, const N: usize> DatePoint<D, N> {
+impl<D, V> DatePoint<D, V>
+where
+    D: Date,
+    V: TryFrom<StringRecord> + Copy,
+{
     /// Create a new datepoint.
-    pub fn new(date: D, data: [f32; N]) -> DatePoint<D, N> {
+    pub fn new(date: D, data: V) -> DatePoint<D, V> {
         DatePoint {date, data}
-    }
-
-    /// Return the value at column index.
-    pub fn from_column(&self, column: usize) -> DatePoint<D, 1> {
-        DatePoint {
-            date: self.date,
-            data: [self.data[column]]
-        }
     }
 
     /// Return the date of a `DatePoint`.
@@ -193,7 +196,7 @@ impl<D: Date, const N: usize> DatePoint<D, N> {
     }
 
     /// Return an array of data without the date.
-    pub fn data(&self) -> [f32; N] {
+    pub fn data(&self) -> V {
         self.data
     }
 }
@@ -203,17 +206,28 @@ impl<D: Date, const N: usize> DatePoint<D, N> {
 /// A time-series with no guarantees of ordering or unique dates, but must have at least one
 /// element.
 #[derive(Debug, Serialize)]
-pub struct TimeSeries<D: Date, const N: usize>(Vec<DatePoint<D, N>>);
+pub struct TimeSeries<D, V>(Vec<DatePoint<D, V>>)
+where
+    D: Date,
+    V: TryFrom<StringRecord> + Copy,
+    <V as TryFrom<StringRecord>>::Error: StdError + Send + Sync + 'static;
 
-impl<D: Date, const N: usize> TimeSeries<D, N> {
+impl<D, V> TimeSeries<D, V>
+where
+    D: Date,
+    V: TryFrom<StringRecord> + Copy,
+    <V as TryFrom<StringRecord>>::Error: StdError + Send + Sync + 'static,
+{
 
-    fn first_datepoint(&self) -> DatePoint<D, N> {
+    fn first_datepoint(&self) -> DatePoint<D, V> {
         *self.0.first().unwrap()
     }
 
-    fn last_datepoint(&self) -> DatePoint<D, N> {
+    fn last_datepoint(&self) -> DatePoint<D, V> {
         *self.0.last().unwrap()
     }
+
+    // What kind of values can be parsed from csv? See csv crate.
 
     // Having an inner function allows from_csv() to read either from a file of from a string, or
     // to build a customized csv reader. The `opt_path_str` argument contains the file name if it
@@ -223,16 +237,16 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
         date_fmt: &str,
         opt_path_str: Option<&str>) -> Result<Self> 
     {
-        let mut acc: Vec<DatePoint<D, N>> = Vec::new();
+        let mut acc: Vec<DatePoint<D, V>> = Vec::new();
+
+        let mut field_count: &mut Option<usize> = &mut None; 
 
         // Iterate over lines of csv
         for result_record in rdr.records() {
 
-            // Verify record lengths
             let record = result_record?;
-            if record.len() != N + 1 { 
-                bail!(csv_error_msg("Record length mismatch", record.position(), opt_path_str))
-            }
+
+            check_field_count(&record, &mut field_count)?;
 
             // Parse date
             let date_str = record.get(0).context(
@@ -243,25 +257,13 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
                 csv_error_msg("Failed to parse date", record.position(), opt_path_str)
             )?;
 
-            // Parse values
-            let mut values = [0f32; N];
-            for i in 1..record.len() {
-                let num_str = record.get(i).context(
-                    csv_error_msg(
-                        &format!("Failed to get value in column [{}]", i),
-                        record.position(),
-                        opt_path_str
-                    )
-                )?;
-                values[i - 1] = num_str.parse().context(
-                    csv_error_msg(
-                        &format!("Failed to parse value in column [{}]", i),
-                        record.position(),
-                        opt_path_str,
-                    )
-                )?
-            }
-            acc.push(DatePoint::<D, N>::new(date, values));
+            let data_record: csv::StringRecord = record.iter().skip(1).collect();
+    
+            // let values: V = <StringRecord as TryFrom<StringRecord>>::try_from(StringRecord(data_record))?;
+
+            let values: std::result::Result<V, _> = V::try_from(StringRecord(data_record));
+            
+            acc.push(DatePoint::<D, V>::new(date, values?));
         }
         if acc.is_empty() {
             bail!("TimeSeries must have at least one element.")
@@ -284,7 +286,7 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
             .from_path(path.as_ref())
             .context(error_message)?;
 
-        TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, opt_path_str)
+        TimeSeries::<D, V>::from_csv_inner(rdr, date_fmt, opt_path_str)
     }
 
     /// Create a new time-series from csv file. Usually it is sufficient to use the default
@@ -293,8 +295,7 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
     pub fn from_csv_with_builder<P: AsRef<OsStr> + ?Sized>(
         path: &P,
         date_fmt: &str,
-        rdr_builder: ReaderBuilder) -> Result<Self>
-    {
+        rdr_builder: ReaderBuilder) -> Result<Self> {
         let opt_path_str = path.as_ref().to_str();
         let error_message = match opt_path_str {
             Some(path) => format!("Failed to read file at [{}]", path),
@@ -305,7 +306,7 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
             .from_path(path.as_ref())
             .context(error_message)?;
 
-        TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, opt_path_str)
+        TimeSeries::<D, V>::from_csv_inner(rdr, date_fmt, opt_path_str)
     }
 
     /// Create a new time-series from a string in csv format.
@@ -316,7 +317,7 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
             .trim(Trim::All)
             .from_reader(csv.as_bytes());
 
-        TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, None)
+        TimeSeries::<D, V>::from_csv_inner(rdr, date_fmt, None)
     }
 
     /// Create a new time-series from csv file. Usually it is sufficient to use the default
@@ -324,7 +325,7 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
     /// configured `csv::ReaderBuilder`.
     pub fn from_csv_str_with_builder(csv: &str, date_fmt: &str, rdr_builder: ReaderBuilder) -> Result<Self> {
         let rdr = rdr_builder.from_reader(csv.as_bytes());
-        TimeSeries::<D, N>::from_csv_inner(rdr, date_fmt, None)
+        TimeSeries::<D, V>::from_csv_inner(rdr, date_fmt, None)
     }
 
     pub fn len(&self) -> usize {
@@ -336,7 +337,9 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
     pub fn into_regular(
         self, 
         start_date: Option<D>, 
-        end_date: Option<D>) -> Result<RegularTimeSeries<D, N>>
+        end_date: Option<D>) -> Result<RegularTimeSeries<D, V>>
+    where
+        <V as TryFrom<StringRecord>>::Error: StdError + Send + Sync + 'static,
     {
         let range = DateRange::new(
             start_date.unwrap_or(self.first_datepoint().date()),
@@ -365,21 +368,64 @@ impl<D: Date, const N: usize> TimeSeries<D, N> {
     }
 }
 
+// Check that the field count does not change else return an error.
+fn check_field_count<'a>(record: &csv::StringRecord, mut previous_len: &'a mut Option<usize>) -> Result<()> {
+
+    if let Some(prev) = previous_len {
+        if prev != &mut record.len() {
+
+            let err_msg = match record.position() {
+                Some(pos) => {
+                    format!(
+                        "Record on line {} has length {} but previous field has length {}.",
+                        pos.line(),
+                        record.len(),
+                        prev,
+                    )
+                },
+                None => {
+                    format!(
+                        "Record has length {} but previous field has length {}.",
+                        record.len(),
+                        prev,
+                    )
+                },
+            };
+            bail!(err_msg)
+        }
+    } else { *previous_len = Some(record.len()) }
+    Ok(())
+}
+
 // === RegularTimeSeries ==========================================================================
 
 /// A time-series with regular, contiguous data and at least one data point.
 ///
 /// A `RegularTimeSeries` is guaranteed to have one or more data points.
 #[derive(Debug, Serialize)]
-pub struct RegularTimeSeries<D: Date, const N: usize> {
+pub struct RegularTimeSeries<D, V>
+where
+    D: Date,
+    V: TryFrom<StringRecord> + Copy,
+    <V as TryFrom<StringRecord>>::Error: StdError + Send + Sync + 'static,
+{
     range:  DateRange<D>,
-    ts:     TimeSeries<D, N>,
+    ts:     TimeSeries<D, V>,
 }
 
-impl<D: Date, const N: usize> RegularTimeSeries<D, N> {
+impl<D, V> RegularTimeSeries<D, V>
+where
+    D: Date,
+    V: TryFrom<StringRecord> + Copy,
+    <V as TryFrom<StringRecord>>::Error: StdError + Send + Sync + 'static,
+{
 
     /// Returns an iterator over `Self`.
-    pub fn iter<'a>(&'a self) -> RegularTimeSeriesIter<'a, D, N> {
+    pub fn iter<'a>(&'a self) -> RegularTimeSeriesIter<'a, D, V>
+    where
+        D: Date,
+        V: TryFrom<StringRecord> + Copy,
+    {
         RegularTimeSeriesIter {
             inner_iter: self.range.into_iter(),
             date_points: &self.ts.0,
@@ -387,9 +433,14 @@ impl<D: Date, const N: usize> RegularTimeSeries<D, N> {
     }
 
     /// Returns an iterator that zips up the common dates in two `RegularTimeSeries`.
-    pub fn zip_iter<'a, 'b, const N2: usize>(
+    pub fn zip_iter<'a, 'b, V2>(
         &'a self,
-        other: &'b RegularTimeSeries<D, N2>) -> ZipIter<'a, 'b, D, N, N2>
+        other: &'b RegularTimeSeries<D, V2>) -> ZipIter<'a, 'b, D, V, V2>
+    where
+        D: Date,
+        V2: TryFrom<StringRecord> + Copy,
+        <V as TryFrom<StringRecord>>::Error: StdError + Send + Sync + 'static,
+        <V2 as TryFrom<StringRecord>>::Error: StdError + Send + Sync + 'static,
     {
         // The offsets are guaranteed to be positive due to the common() fn, and so can be
         // unwrapped.
@@ -409,7 +460,11 @@ impl<D: Date, const N: usize> RegularTimeSeries<D, N> {
 
     /// Breaks `Self` into raw components. This is useful when building a new `RegularTimeSeries`
     /// with a different scale.
-    pub fn into_parts<'a>(self) -> (DateRange<D>, Vec<[f32; N]>) {
+    pub fn into_parts<'a>(self) -> (DateRange<D>, Vec<V>)
+    where
+        D: Date,
+        V: TryFrom<StringRecord> 
+    {
         (
             self.range,
             self.ts.0.iter().map(|dp| dp.data()).collect(),
@@ -417,22 +472,32 @@ impl<D: Date, const N: usize> RegularTimeSeries<D, N> {
     }
 
     /// Build a `RegularTimeSeries` from a range of dates and data.
-    pub fn from_parts(range: DateRange<D>, data: Vec<[f32; N]>) -> Result<Self> {
+    pub fn from_parts(range: DateRange<D>, data: Vec<V>) -> Result<Self>
+    where
+        D: Date,
+        V: TryFrom<StringRecord>,
+        <V as TryFrom<StringRecord>>::Error: StdError + Send + Sync + 'static,
+    {
         if range.duration() + 1 != data.len() as isize {
             bail!("The range of dates and the length of the data do not agree.")
         };
         range.into_iter()
             .zip(data.iter())
             .map(|(date, &data)| DatePoint::new(date, data))
-            .collect::<TimeSeries<D, N>>()
+            .collect::<TimeSeries<D, V>>()
             .into_regular(None, None)
     }
 }
 
-impl<D: Date, const N: usize> FromIterator<DatePoint<D, N>> for TimeSeries<D, N> {
+impl<D, V> FromIterator<DatePoint<D, V>> for TimeSeries<D, V>
+where
+    D: Date,
+    V: TryFrom<StringRecord> + Copy,
+    <V as TryFrom<StringRecord>>::Error: StdError + Send + Sync + 'static,
+{
     fn from_iter<T>(iter: T) -> Self
     where
-        T: IntoIterator<Item = DatePoint<D, N>>
+        T: IntoIterator<Item = DatePoint<D, V>>
     {
         Self(iter.into_iter().collect())
     }
@@ -442,13 +507,21 @@ impl<D: Date, const N: usize> FromIterator<DatePoint<D, N>> for TimeSeries<D, N>
 
 /// An iterator over a `RegularTimeSeries`.
 #[derive(Debug)]
-pub struct RegularTimeSeriesIter<'a, D: Date, const N: usize> {
+pub struct RegularTimeSeriesIter<'a, D, V>
+where
+    D: Date,
+    V: TryFrom<StringRecord> + Copy,
+{
     inner_iter: DateRangeIter<D>,
-    date_points: &'a Vec<DatePoint<D, N>>,
+    date_points: &'a Vec<DatePoint<D, V>>,
 }
 
-impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
-    type Item = DatePoint<D, N>;
+impl<'a, D, V> Iterator for RegularTimeSeriesIter<'a, D, V>
+where
+    D: Date,
+    V: TryFrom<StringRecord> + Copy
+{
+    type Item = DatePoint<D, V>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match (&mut self.inner_iter).enumerate().next() {
@@ -462,16 +535,26 @@ impl<'a, D: Date, const N: usize> Iterator for RegularTimeSeriesIter<'a, D, N> {
 
 /// An iterator over the common dates of two `RegularTimeSeries`.
 #[derive(Debug)]
-pub struct ZipIter<'a, 'b, D: Date, const N: usize, const N2: usize> {
+pub struct ZipIter<'a, 'b, D, V1, V2>
+where
+    D: Date,
+    V1: TryFrom<StringRecord> + Copy,
+    V2: TryFrom<StringRecord> + Copy,
+{
     inner_iter: DateRangeIter<D>,
     offset1: usize,
     offset2: usize,
-    date_points1: &'a Vec<DatePoint<D, N>>,
-    date_points2: &'b Vec<DatePoint<D, N2>>,
+    date_points1: &'a Vec<DatePoint<D, V1>>,
+    date_points2: &'b Vec<DatePoint<D, V2>>,
 }
 
-impl<'a, 'b, D: Date, const N: usize, const N2: usize> Iterator for ZipIter<'a, 'b, D, N, N2> {
-    type Item = (DatePoint<D, N>, DatePoint<D, N2>);
+impl<'a, 'b, D, V1, V2> Iterator for ZipIter<'a, 'b, D, V1, V2>
+where
+    D: Date,
+    V1: TryFrom<StringRecord> + Copy,
+    V2: TryFrom<StringRecord> + Copy,
+{
+    type Item = (DatePoint<D, V1>, DatePoint<D, V2>);
 
     fn next(&mut self) -> Option<Self::Item> {
         match (&mut self.inner_iter).enumerate().next() {
@@ -550,67 +633,45 @@ impl<D: Date> Iterator for DateRangeIter<D> {
     }
 }
 
-// https://github.com/serde-rs/serde/issues/1937
+pub struct StringRecord(csv::StringRecord);
 
-mod arrays {
-    use std::{convert::TryInto, marker::PhantomData};
+impl StringRecord {
 
-    use serde::{
-        de::{SeqAccess, Visitor},
-        ser::SerializeTuple,
-        Deserialize, Serialize, Serializer,
-        // Deserializer
-    };
-    pub fn serialize<S: Serializer, T: Serialize, const N: usize>(
-        data: &[T; N],
-        ser: S,
-    ) -> Result<S::Ok, S::Error> {
-        let mut s = ser.serialize_tuple(N)?;
-        for item in data {
-            s.serialize_element(item)?;
-        }
-        s.end()
+    // A subset of the functions implement by csv::StringRecord.
+
+    fn as_slice(&self) -> &str {
+        self.0.as_slice()
     }
 
-    struct ArrayVisitor<T, const N: usize>(PhantomData<T>);
+    fn clear(&mut self) {
+        self.0.clear()
+    }
 
-    impl<'de, T, const N: usize> Visitor<'de> for ArrayVisitor<T, N>
+    fn get(&self, i: usize) -> Option<&str> {
+        self.0.get(i)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn position(&self) -> Option<&csv::Position> {
+        self.0.position()
+    }
+
+    // TODO: Other csv::StringRecord functions
+}
+
+pub trait TryFrom<StringRecord> {
+    type Error;
+
+    fn try_from(record: StringRecord) -> Result<Self, Self::Error>
     where
-        T: Deserialize<'de>,
-    {
-        type Value = [T; N];
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str(&format!("an array of length {}", N))
-        }
-
-        #[inline]
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            // can be optimized using MaybeUninit
-            let mut data = Vec::with_capacity(N);
-            for _ in 0..N {
-                match (seq.next_element())? {
-                    Some(val) => data.push(val),
-                    None => return Err(serde::de::Error::invalid_length(N, &self)),
-                }
-            }
-            match data.try_into() {
-                Ok(arr) => Ok(arr),
-                Err(_) => unreachable!(),
-            }
-        }
-    }
-
-    // pub fn deserialize<'de, D, T, const N: usize>(deserializer: D) -> Result<[T; N], D::Error>
-    // where
-    //     D: Deserializer<'de>,
-    //     T: Deserialize<'de>,
-    // {
-    //     deserializer.deserialize_tuple(N, ArrayVisitor::<T, N>(PhantomData))
-    // }
+        Self: Sized;
 }
 
 #[cfg(test)]
