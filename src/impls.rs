@@ -1,6 +1,6 @@
 
 use chrono::{Datelike};
-use crate::{StringRecord, Date, Scale, TSError};
+use crate::{StringRecord, Date, Scale, ts_error, TSError};
 use serde::{Serialize, Serializer};
 use std::{convert::{TryFrom}, fmt, marker::{Copy, PhantomData}};
 
@@ -164,7 +164,7 @@ pub mod test {
     };
 
     #[test]
-    fn creating_daterange_from_monthlydates_should_work() {
+    fn creating_daterange_from_monthly_dates_should_work() {
         DateRange::new(Monthly::ym(2020, 1), Monthly::ym(2021, 1));
     }
 }
@@ -175,27 +175,22 @@ pub mod test {
 
 // A time series where each date is associated with a single `f32` of data.
 #[derive(Copy, Clone)]
-pub struct SingleF32(f32);
+pub struct SingleF32(pub f32);
 
 impl TryFrom<StringRecord> for SingleF32 {
     type Error = TSError;
 
     fn try_from(record: StringRecord) -> Result<Self, Self::Error> {
     
-       if record.0.len() != 1 { 
-           return Err(TSError::WithMessage("Expected records with a date and a single value.".to_owned()))
+       if record.inner().len() != 1 { 
+           return Err(TSError::Len("Expected records with a date and a single value.".to_owned()))
        }
 
-       let err_msg = match record.0.position() {
-           Some(pos) => format!("Failed to get a singular value on line [{}].", pos.line()),
-           None => format!("Failed to get a singular value."),
-       };
-       
        Ok(SingleF32(
-           record.0.get(0)
-                .ok_or(TSError::WithMessage(err_msg.clone()))?
+           record.inner().get(0)
+                .ok_or(ts_error("Failed to get a singular value", Some(&record), None))?
                 .parse()
-                .map_err(|_| TSError::DateFromCSV(err_msg))?
+                .map_err(|_| ts_error("Failed to parse data", Some(&record), None))?
         ))
     }
 }
@@ -204,36 +199,27 @@ impl TryFrom<StringRecord> for SingleF32 {
 
 // A time series where each date is associated with a single `f32` of data.
 #[derive(Copy, Clone)]
-pub struct DoubleF32(f32, f32);
+pub struct DoubleF32(pub f32, pub f32);
 
 impl TryFrom<StringRecord> for DoubleF32 {
     type Error = TSError;
 
     fn try_from(record: StringRecord) -> Result<Self, Self::Error> {
     
-       if record.0.len() != 2 { 
-           return Err(TSError::WithMessage("Expected records with a date and two values.".to_owned()))
+       if record.inner().len() != 2 { 
+           return Err(TSError::Len("Expected records with a date and two values.".to_owned()))
        }
 
-       let date_err_msg = match record.0.position() {
-           Some(pos) => format!("Failed to get date on line [{}].", pos.line()),
-           None => format!("Failed to get date."),
-       };
-       let val_err_msg = match record.0.position() {
-           Some(pos) => format!("Failed to get values on line [{}].", pos.line()),
-           None => format!("Failed to get  values."),
-       };
-       
        Ok(DoubleF32(
-           record.0.get(0)
-                .ok_or(TSError::WithMessage(date_err_msg.clone()))?
+           record.inner().get(0)
+                .ok_or(ts_error("Failed to get date", Some(&record), None))?
                 .parse()
-                .map_err(|_| TSError::DateFromCSV(date_err_msg))?
+                .map_err(|_| ts_error("Failed to parse date", Some(&record), None))?
             ,
-           record.0.get(1)
-                .ok_or(TSError::WithMessage(val_err_msg.clone()))?
+           record.inner().get(1)
+                .ok_or(ts_error("Failed to get data", Some(&record), None))?
                 .parse()
-                .map_err(|_| TSError::DataFromCSV(val_err_msg))?
+                .map_err(|_| ts_error("Failed to parse data", Some(&record), None))?
             ,
         ))
     }

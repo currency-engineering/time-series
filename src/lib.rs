@@ -1,32 +1,31 @@
 //! The `time-series` crate is an abstraction of dates associated with data. Dates are unusual in
 //! that they map to a regular scale, so that monthly dates are always evenly separated. Data is
-//! any type that is UTF-8 and can be read as CSV record.
+//! any type that is UTF-8 and can be read as a CSV record.
 //!
 //! #### Building a `RegularTimeSeries` from data
 //!
 //! ```no_run
 //! use time_series::{RegularTimeSeries, TimeSeries};
-//! use time_series::impls::Monthly;
+//! use time_series::impls::{Monthly, SingleF32};
 //!
 //! // The standard procedure is to create a `TimeSeries` from `csv` data. `
-//! // ::<1> defines the data array to be of length 1.
-//! let ts = TimeSeries::<Monthly, 1>::from_csv("./tests/test.csv", "%Y-%m-%d").unwrap();
+//! let ts = TimeSeries::<Monthly, SingleF32>::from_csv("./tests/test.csv", "%Y-%m-%d").unwrap();
 //!
-//! // And then to convert to a regular time-series with ordered data with regular
+//! // And then to convert to a regular time-series with ordered data over regular
 //! // intervals and no missing points.
 //! let rts = ts.into_regular(None, Some(Monthly::ym(2013,1))).unwrap();
 //! ```
-//! #### Mapping a `RegularTimeSeries`
+//! #### Working with `RegularTimeSeries`
 //!
 //! Most of the transformations we want to make on a `RegularTimesSeries` can be done using it as an
 //! iterator and mapping from one `DatePoint` to another. We need to do a conversion from a
-//! `TimeSeries` to a `RegularTimeSeries` at the end to confirm that the time-series is still
+//! `TimeSeries` to a `RegularTimeSeries` at the end to verify that the time-series is still
 //! contiguous.
 //!
 //! ```ignore
-//! let single_column: RegularTimeSeries<Monthly, 1> = regular_time_series
+//! let single_column: RegularTimeSeries<Monthly, SingleF32> = regular_time_series
 //!     .iter()
-//!     .map(|datepoint| datepoint.from_column(0))
+//!     .map(|datepoint| datepoint.0)
 //!     .collect::<TimeSeries<D, N>>()
 //!     .into_regular(None, None).unwrap();
 //! ```
@@ -54,10 +53,8 @@ pub mod impls;
 use thiserror::Error;
 use csv::{Reader, ReaderBuilder, Trim};
 use serde::{Serialize};
-use std::{
-    cmp::{min, max, Ordering}, convert::TryFrom, fmt::{Debug, Display, self},
-    io::Read, marker::{Copy, PhantomData}, ops::{Add, Sub},
-};
+use std::{ cmp::{min, max, Ordering}, convert::TryFrom, fmt::{Debug, Display, self} };
+use std::{ io::Read, marker::{Copy, PhantomData}, ops::{Add, Sub} };
 
 type Result<T> = std::result::Result<T, TSError>;
 
@@ -92,9 +89,7 @@ type Result<T> = std::result::Result<T, TSError>;
 //     }
 // }
 
-// TODO: Implementations of  TryFrom<StringRecord> are required to handle TSErrors, so we need to
-// make it easy for users of this library to work with it.  
-
+/// The error type to be used when implementing values.
 #[derive(Debug, Error)]
 pub enum TSError {
 
@@ -108,28 +103,50 @@ pub enum TSError {
     #[error("Start date [{0}] is later than end date [{1}]")]
     DateOrder(String, String),
 
+    // Used when reconstructing time-series from parts. 
     #[error("The range of dates and the length of the data do not agree.")]
     Parts,
 
+    // Occurs when a file cannot be found.
     #[error("{0}")]
     FilePath(String),
 
-    // (line, line)
+    // Occurs when dates do not have regular intervals.
     #[error("Non-contiguity between lines [{0}] and [{1}]")]
     Irregular(usize, usize),
             
     #[error("TimeSeries must have at least one element.")]
     Empty,
 
+    // Occurs when there is a mismatch in number of csv fields.
     #[error("{0}")]
     Len(String),
 
-    // // (line num, current len, previous len)
-    // #[error("Record has length {1} but previous field has length {2}.")]
-    // WrongRecordLen(usize, usize),
-
+    /// Generated from `ts_error', usually from impls of `TryFrom<StringRecord>`.
     #[error("{0}")]
-    WithMessage(String)
+    CSV(String)
+}
+
+/// A helper for client code to build error messages that may contain a position in the csv file
+/// and its file path. For example,
+/// ```
+/// let pos = csv::Position.set_line(4);
+/// let path = "data.csv";
+///
+/// ts_error = ts_error("Failed to read date", Some(pos.line()), Some(path));
+/// assert_eq!(ts_error, "Failed to read date at line [4] from [data.csv]");
+/// ```
+pub fn ts_error(msg: &str, record: Option<&StringRecord>, path: Option<&str>) -> TSError {
+    let pos = record.map(|record| record.position()).flatten();
+
+    TSError::CSV(
+        match (pos, path) {
+            (Some(pos), Some(path)) => format!("{} at line [{}] from [{}]", msg, pos.line(), path),
+            (Some(pos), None) => format!("{} at line [{}]", msg, pos.line()),
+            (None, Some(path)) => format!("{} from [{}]", msg, path),
+            (None, None) => msg.to_owned(),
+        }
+    )
 }
 
 // === Date trait =================================================================================
@@ -707,23 +724,13 @@ pub struct StringRecord(csv::StringRecord);
 
 impl StringRecord {
 
-    // A subset of the functions implement by csv::StringRecord.
-
-    // fn as_slice(&self) -> &str {
-    //     self.0.as_slice()
-    // }
-
-    // fn clear(&mut self) {
-    //     self.0.clear()
-    // }
+    pub fn inner(&self) -> &csv::StringRecord {
+        &self.0
+    }
 
     fn get(&self, i: usize) -> Option<&str> {
         self.0.get(i)
     }
-
-    // fn is_empty(&self) -> bool {
-    //     self.0.is_empty()
-    // }
 
     fn iter(&self) -> StringRecordIter {
         StringRecordIter(
@@ -738,8 +745,6 @@ impl StringRecord {
     fn position(&self) -> Option<&csv::Position> {
         self.0.position()
     }
-
-    // TODO: Other csv::StringRecord functions
 }
 
 pub struct StringRecordIter<'r>(csv::StringRecordIter<'r>);
