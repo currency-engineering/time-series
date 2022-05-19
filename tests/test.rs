@@ -1,7 +1,4 @@
-use std::path::Path;
-use time_series::{
-    TimeSeries
-};
+use time_series::TimeSeries;
 use time_series::impls::*;
 
 #[test]

@@ -55,7 +55,7 @@ use thiserror::Error;
 use csv::{Reader, ReaderBuilder, Trim};
 use serde::{Serialize};
 use std::{
-    cmp::{min, max, Ordering}, convert::TryFrom, ffi:: OsStr, fmt::{Debug, Display, self},
+    cmp::{min, max, Ordering}, convert::TryFrom, fmt::{Debug, Display, self},
     io::Read, marker::{Copy, PhantomData}, ops::{Add, Sub},
 };
 
