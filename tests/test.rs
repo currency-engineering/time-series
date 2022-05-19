@@ -1,9 +1,10 @@
+use std::path::Path;
 use time_series::{
     TimeSeries
 };
-use time_series::date_impls::Monthly;
+use time_series::impls::*;
 
 #[test]
 fn test_from_csv_with_a_file() {
-    TimeSeries::<Monthly, 1>::from_csv("./tests/test.csv", "%Y-%m-%d").unwrap();
+    TimeSeries::<Monthly, SingleF32>::from_csv("./tests/test.csv", "%Y-%m-%d").unwrap();
 }

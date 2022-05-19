@@ -1,26 +1,8 @@
 
-use anyhow::{
-    anyhow,
-    bail,
-    Error,
-    Result,
-};
 use chrono::{Datelike};
-use crate::{
-    StringRecord,
-    Date,
-    Scale,
-};
+use crate::{StringRecord, Date, Scale, TSError};
 use serde::{Serialize, Serializer};
-use std::{
-    // cmp::Ordering,
-    // convert::{TryFrom, TryInto},
-    fmt,
-    // fs,
-    marker::{Copy, PhantomData},
-    // ops::{Add, Sub},
-    // path::Path,
-};
+use std::{convert::{TryFrom}, fmt, marker::{Copy, PhantomData}};
 
 // === Shared Date Implementations ================================================================
 
@@ -178,7 +160,7 @@ pub mod test {
 
     use crate::{
         DateRange,
-        date_impls::Monthly,
+        impls::Monthly,
     };
 
     #[test]
@@ -189,27 +171,75 @@ pub mod test {
 
 // === Shared Transform Implementations ===========================================================
 
-pub struct F32(f32);
+// --- SingleF32 ----------------------------------------------------------------------------------
 
-impl TryFrom<StringRecord> for F32 {
-    type Error = Error;
+// A time series where each date is associated with a single `f32` of data.
+#[derive(Copy, Clone)]
+pub struct SingleF32(f32);
+
+impl TryFrom<StringRecord> for SingleF32 {
+    type Error = TSError;
 
     fn try_from(record: StringRecord) -> Result<Self, Self::Error> {
     
-       if record.0.len() != 1 { bail!("Expected records with a date and a single value.") }
+       if record.0.len() != 1 { 
+           return Err(TSError::WithMessage("Expected records with a date and a single value.".to_owned()))
+       }
 
        let err_msg = match record.0.position() {
            Some(pos) => format!("Failed to get a singular value on line [{}].", pos.line()),
            None => format!("Failed to get a singular value."),
        };
        
-       Ok(F32(
+       Ok(SingleF32(
            record.0.get(0)
-                .ok_or(anyhow!(err_msg))?
-                .parse()?
+                .ok_or(TSError::WithMessage(err_msg.clone()))?
+                .parse()
+                .map_err(|_| TSError::DateFromCSV(err_msg))?
         ))
     }
 }
+
+// --- DoubleF32 ----------------------------------------------------------------------------------
+
+// A time series where each date is associated with a single `f32` of data.
+#[derive(Copy, Clone)]
+pub struct DoubleF32(f32, f32);
+
+impl TryFrom<StringRecord> for DoubleF32 {
+    type Error = TSError;
+
+    fn try_from(record: StringRecord) -> Result<Self, Self::Error> {
+    
+       if record.0.len() != 2 { 
+           return Err(TSError::WithMessage("Expected records with a date and two values.".to_owned()))
+       }
+
+       let date_err_msg = match record.0.position() {
+           Some(pos) => format!("Failed to get date on line [{}].", pos.line()),
+           None => format!("Failed to get date."),
+       };
+       let val_err_msg = match record.0.position() {
+           Some(pos) => format!("Failed to get values on line [{}].", pos.line()),
+           None => format!("Failed to get  values."),
+       };
+       
+       Ok(DoubleF32(
+           record.0.get(0)
+                .ok_or(TSError::WithMessage(date_err_msg.clone()))?
+                .parse()
+                .map_err(|_| TSError::DateFromCSV(date_err_msg))?
+            ,
+           record.0.get(1)
+                .ok_or(TSError::WithMessage(val_err_msg.clone()))?
+                .parse()
+                .map_err(|_| TSError::DataFromCSV(val_err_msg))?
+            ,
+        ))
+    }
+}
+
+// === Transforms =================================================================================
 
     // let ts = TimeSeries::from_csv
 
