@@ -1,6 +1,7 @@
-//! The `time-series` crate is an abstraction of dates associated with data. Dates are unusual in
-//! that they map to a regular scale, so that monthly dates are always evenly separated. Data is
-//! any type that is UTF-8 and can be read as a CSV record.
+//! The `time-series` crate is an abstraction of dates associated with values. The `Date` trait and
+//! the `Value` trait are to be implemented by concrete types. `Date`s are anything that can be
+//! mapped to a scale and back again. `Value`s are anything that can be read from a
+//! `csv::StringRecord`. Examples of concrete implementations can be found in the `impl` module.
 //!
 //! #### Building a `RegularTimeSeries` from data
 //!
@@ -18,7 +19,7 @@
 //! #### Working with `RegularTimeSeries`
 //!
 //! Most of the transformations we want to make on a `RegularTimesSeries` can be done using it as an
-//! iterator and mapping from one `DatePoint` to another. We need to do a conversion from a
+//! iterator and mapping from one `DateValue` to another. We need to do a conversion from a
 //! `TimeSeries` to a `RegularTimeSeries` at the end to verify that the time-series is still
 //! contiguous.
 //!
@@ -46,8 +47,8 @@
 //! )
 //! ```
 
-/// Some common [`Date`](trait.Date.html), Transform, and
-/// [`TryFrom<StringRecord>`](trait.TryFrom.html) implementations.
+/// Some common [`Date`](trait.Date.html), Transform, and [`Value>`](traitValue.html)
+/// implementations.
 pub mod impls;
 
 use thiserror::Error;
@@ -89,42 +90,44 @@ type Result<T> = std::result::Result<T, TSError>;
 //     }
 // }
 
-/// The error type to be used when implementing values.
 #[derive(Debug, Error)]
 pub enum TSError {
 
-    #[error("{0}")]
-    DataFromCSV(String),
-
-    #[error("{0}")]
-    DateFromCSV(String),
-
-    // (start_date, end_date)
-    #[error("Start date [{0}] is later than end date [{1}]")]
+    /// Error for if dates are in the wrong order.
+    #[error("Start date {0} is later than end date {1}")]
     DateOrder(String, String),
 
-    // Used when reconstructing time-series from parts. 
+    /// Error for when reconstructing time-series from parts. 
     #[error("The range of dates and the length of the data do not agree.")]
     Parts,
 
-    // Occurs when a file cannot be found.
+    /// File not found.
     #[error("{0}")]
     FilePath(String),
 
-    // Occurs when dates do not have regular intervals.
-    #[error("Non-contiguity between lines [{0}] and [{1}]")]
+    /// Error for when dates do not have regular intervals.
+    #[error("Non-contiguity between lines {0} and {1}")]
     Irregular(usize, usize),
             
+    /// Error for if time-series does not have at least one element.
     #[error("TimeSeries must have at least one element.")]
     Empty,
 
-    // Occurs when there is a mismatch in number of csv fields.
+    /// Error for when there is a mismatch in number of csv fields.
     #[error("{0}")]
     Len(String),
 
-    /// Generated from `ts_error', usually from impls of `TryFrom<StringRecord>`.
+    /// Error if parse error and debug data is available.
     #[error("{0}")]
-    CSV(String)
+    CSV(String),
+
+    /// Error for if value does not parse.
+    #[error("{0}")]
+    ParseValue(String),
+
+    /// Error for if data does not parse.
+    #[error("{0}")]
+    ParseDate(String),
 }
 
 /// A helper for client code to build error messages that may contain a position in the csv file
@@ -141,9 +144,9 @@ pub fn ts_error(msg: &str, record: Option<&StringRecord>, path: Option<&str>) ->
 
     TSError::CSV(
         match (pos, path) {
-            (Some(pos), Some(path)) => format!("{} at line [{}] from [{}]", msg, pos.line(), path),
-            (Some(pos), None) => format!("{} at line [{}]", msg, pos.line()),
-            (None, Some(path)) => format!("{} from [{}]", msg, path),
+            (Some(pos), Some(path)) => format!("{} at line '{}' from '{}'", msg, pos.line(), path),
+            (Some(pos), None) => format!("{} at line '{}'", msg, pos.line()),
+            (None, Some(path)) => format!("{} from '{}'", msg, path),
             (None, None) => msg.to_owned(),
         }
     )
@@ -157,7 +160,7 @@ pub fn ts_error(msg: &str, record: Option<&StringRecord>, path: Option<&str>) ->
 /// functionality such as `parse_from_str()` among other things.
 pub trait Date
 where
-    Self: Sized + From<chrono::NaiveDate> + Into<chrono::NaiveDate> + Serialize + Debug + Display + Copy,
+    Self: Serialize + Debug + Display + Copy,
 {
     /// Associate a number with every `Date` value.
     fn to_scale(&self) -> Scale<Self>;
@@ -165,12 +168,9 @@ where
     /// Give an `Scale`, return its associated `Date`.
     fn from_scale(scale: Scale<Self>) -> Self;
 
-    /// Parse a `Date` from a string, given a format string.
-    fn parse_from_str(fmt: &str, s: &str) -> Result<Self> {
-        let nd = chrono::NaiveDate::parse_from_str(fmt, s)
-            .map_err(|_| TSError::DateFromCSV(format!("Failed to parse date using fmt [{}]", fmt)))?;
-        Ok(nd.into())
-    }
+    fn parse_from_str(s: &str) -> Result<Self>;
+
+    fn to_string(&self) -> String; 
 }
 
 // === Scale ======================================================================================
@@ -239,30 +239,35 @@ impl<D: Date> PartialEq for Scale<D> {
 
 impl<D: Date> Eq for Scale<D> {}
 
-// === DatePoint ==================================================================================
+// === Value ======================================================================================
 
-/// A `Date` associated with a fixed length array of `f32`s.
+/// A `Value` can be anything that can be read from a `csv::StringRecord`.
+pub trait Value: Copy {
+
+    fn from_csv_string(record: StringRecord) -> Result<Self>
+    where
+        Self: Sized;
+
+    fn to_csv_string(&self) -> String;
+}
+
+// === DateValue ==================================================================================
+
+/// A `Date` associated with a `Value`.
 #[derive(Clone, Copy, Debug, Serialize)]
-pub struct DatePoint<D, V>
-where
-    D: Date,
-    V: TryFrom<StringRecord> + Copy,
-{
+pub struct DateValue<D: Date, V: Value> {
     pub date: D,
     data: V,
 }
 
-impl<D, V> DatePoint<D, V>
-where
-    D: Date,
-    V: TryFrom<StringRecord> + Copy,
-{
+impl<D: Date, V: Value> DateValue<D, V> {
+
     /// Create a new datepoint.
-    pub fn new(date: D, data: V) -> DatePoint<D, V> {
-        DatePoint {date, data}
+    pub fn new(date: D, data: V) -> DateValue<D, V> {
+        DateValue {date, data}
     }
 
-    /// Return the date of a `DatePoint`.
+    /// Return the date of a `DateValue`.
     pub fn date(&self) -> D {
         self.date
     }
@@ -276,26 +281,17 @@ where
 // === TimeSeries =================================================================================
 
 /// A time-series with no guarantees of ordering or unique dates, but must have at least one
-/// element.
+/// `DateValue`.
 #[derive(Debug, Serialize)]
-pub struct TimeSeries<D, V>(Vec<DatePoint<D, V>>)
-where
-    D: Date,
-    V: TryFrom<StringRecord, Error = TSError> + Copy,
-    <V as TryFrom<StringRecord>>::Error: Send + Sync + 'static;
+pub struct TimeSeries<D: Date, V: Value>(Vec<DateValue<D, V>>);
 
-impl<D, V> TimeSeries<D, V>
-where
-    D: Date,
-    V: TryFrom<StringRecord, Error = TSError> + Copy,
-    <V as TryFrom<StringRecord>>::Error: Send + Sync + 'static,
-{
+impl<D: Date, V: Value> TimeSeries<D, V> {
 
-    fn first_datepoint(&self) -> DatePoint<D, V> {
+    fn first_datepoint(&self) -> DateValue<D, V> {
         *self.0.first().unwrap()
     }
 
-    fn last_datepoint(&self) -> DatePoint<D, V> {
+    fn last_datepoint(&self) -> DateValue<D, V> {
         *self.0.last().unwrap()
     }
 
@@ -308,11 +304,8 @@ where
         mut rdr: Reader<R>,
         date_fmt: &str,
         opt_path: Option<&str>) -> Result<Self> 
-    where
-        V: TryFrom<StringRecord, Error = TSError> + Copy,
-        <V as TryFrom<StringRecord>>::Error: Send + Sync + 'static,
     {
-        let mut acc: Vec<DatePoint<D, V>> = Vec::new();
+        let mut acc: Vec<DateValue<D, V>> = Vec::new();
 
         let mut field_count: &mut Option<usize> = &mut None; 
 
@@ -320,15 +313,15 @@ where
         for result_record in rdr.records() {
             let record = StringRecord(
                 result_record
-                    .map_err(|_| TSError::DateFromCSV(format!("Failed to read record")))?
+                    .map_err(|_| TSError::ParseDate(format!("Failed to read record")))?
             );
 
             check_field_count(&record, &mut field_count)?;
-            let date: D = date_from_record(date_fmt, &record, opt_path)?;
+            let date: D = date_from_record(&record, opt_path)?;
             let values: V = data_from_record(&record)
-                .map_err(|_| TSError::DataFromCSV("Failed to coerce to data type".to_owned()))?;
+                .map_err(|_| TSError::ParseValue("Failed to coerce to data type".to_owned()))?;
 
-            acc.push(DatePoint::<D, V>::new(date, values));
+            acc.push(DateValue::<D, V>::new(date, values));
         }
         if acc.is_empty() { return Err(TSError::Empty) }
         Ok(TimeSeries(acc))
@@ -374,8 +367,8 @@ where
     }
 
     /// Create a new time-series from csv file. Usually it is sufficient to use the default
-    /// `csv::Reader` but if you need to control the csv reader then you can pass in a
-    /// configured `csv::ReaderBuilder`.
+    /// `csv::Reader` but if more control is required over the CSV reader, then a custom
+    /// `csv::ReaderBuilder` can be used as an argument.
     pub fn from_csv_str_with_builder(
         csv: &str,
         date_fmt: &str,
@@ -395,9 +388,6 @@ where
         self, 
         start_date: Option<D>, 
         end_date: Option<D>) -> Result<RegularTimeSeries<D, V>>
-    where
-        V: TryFrom<StringRecord, Error = TSError> + Copy,
-        <V as TryFrom<StringRecord>>::Error: Send + Sync + 'static,
     {
         let range = DateRange::new(
             start_date.unwrap_or(self.first_datepoint().date()),
@@ -441,20 +431,16 @@ where
 //     }
 // }
 
-fn date_from_record<D: Date>(date_fmt: &str, record: &StringRecord, _opt_path: Option<&str>) -> Result<D> {
+fn date_from_record<D: Date>(record: &StringRecord, _opt_path: Option<&str>) -> Result<D> {
     let line = record.position().map(|pos| format!("{}", pos.line())).unwrap_or("?".to_owned());
     let date_str = record.get(0)
-        .ok_or(TSError::DateFromCSV(format!("Empty record on line [{}]", line)))?;
-    <D as Date>::parse_from_str(date_str, date_fmt)
+        .ok_or(TSError::ParseDate(format!("Empty record on line [{}]", line)))?;
+    <D as Date>::parse_from_str(date_str)
 }
 
-fn data_from_record<V>(record: &StringRecord) -> Result<V>
-where
-    V: TryFrom<StringRecord, Error = TSError> + Copy,
-    <V as TryFrom<StringRecord>>::Error: Send + Sync + 'static,
-{
+fn data_from_record<V: Value>(record: &StringRecord) -> Result<V> {
     let data_record: csv::StringRecord = record.iter().skip(1).collect();
-    V::try_from(StringRecord(data_record))
+    V::from_csv_string(StringRecord(data_record))
 }
 
 // Check that the field count does not change while iterating over records else return an error.
@@ -489,36 +475,20 @@ fn record_err(record: &StringRecord, previous: usize) -> TSError {
     }
 }
 
-
 // === RegularTimeSeries ==========================================================================
 
-/// A time-series with regular, contiguous data and at least one data point.
+/// A time-series with regular, contiguous data and at least one `DateValue`.
 ///
 /// A `RegularTimeSeries` is guaranteed to have one or more data points.
 #[derive(Debug, Serialize)]
-pub struct RegularTimeSeries<D, V>
-where
-    D: Date,
-    V: TryFrom<StringRecord, Error = TSError> + Copy,
-    <V as TryFrom<StringRecord>>::Error: Send + Sync + 'static,
-{
+pub struct RegularTimeSeries<D: Date, V: Value> {
     range:  DateRange<D>,
     ts:     TimeSeries<D, V>,
 }
 
-impl<D, V> RegularTimeSeries<D, V>
-where
-    D: Date,
-    V: TryFrom<StringRecord, Error = TSError> + Copy,
-    <V as TryFrom<StringRecord>>::Error: Send + Sync + 'static,
-{
-
+impl<D: Date, V: Value> RegularTimeSeries<D, V> {
     /// Returns an iterator over `Self`.
-    pub fn iter<'a>(&'a self) -> RegularTimeSeriesIter<'a, D, V>
-    where
-        D: Date,
-        V: TryFrom<StringRecord, Error = TSError> + Copy,
-    {
+    pub fn iter<'a>(&'a self) -> RegularTimeSeriesIter<'a, D, V> {
         RegularTimeSeriesIter {
             inner_iter: self.range.into_iter(),
             date_points: &self.ts.0,
@@ -526,15 +496,9 @@ where
     }
 
     /// Returns an iterator that zips up the common dates in two `RegularTimeSeries`.
-    pub fn zip_iter<'a, 'b, V2>(
+    pub fn zip_iter<'a, 'b, V2: Value>(
         &'a self,
-        other: &'b RegularTimeSeries<D, V2>) -> ZipIter<'a, 'b, D, V, V2>
-    where
-        D: Date,
-        V2: TryFrom<StringRecord, Error = TSError> + Copy,
-        <V as TryFrom<StringRecord>>::Error: Send + Sync + 'static,
-        <V2 as TryFrom<StringRecord>>::Error: Send + Sync + 'static,
-    {
+        other: &'b RegularTimeSeries<D, V2>) -> ZipIter<'a, 'b, D, V, V2> {
         // The offsets are guaranteed to be positive due to the common() fn, and so can be
         // unwrapped.
         let date_range = self.range.common(&other.range);
@@ -553,42 +517,28 @@ where
 
     /// Breaks `Self` into raw components. This is useful when building a new `RegularTimeSeries`
     /// with a different scale.
-    pub fn into_parts<'a>(self) -> (DateRange<D>, Vec<V>)
-    where
-        D: Date,
-        V: TryFrom<StringRecord, Error = TSError> 
-    {
-        (
-            self.range,
-            self.ts.0.iter().map(|dp| dp.data()).collect(),
-        )
-    }
+    pub fn into_parts<'a>(self) -> (DateRange<D>, Vec<V>) {
+    (
+        self.range,
+        self.ts.0.iter().map(|dp| dp.data()).collect(),
+    )}
 
     /// Build a `RegularTimeSeries` from a range of dates and data.
-    pub fn from_parts(range: DateRange<D>, data: Vec<V>) -> Result<Self>
-    where
-        D: Date,
-        V: TryFrom<StringRecord, Error = TSError>,
-        <V as TryFrom<StringRecord>>::Error: Send + Sync + 'static,
-    {
+    pub fn from_parts(range: DateRange<D>, data: Vec<V>) -> Result<Self> {
         if range.duration() + 1 != data.len() as isize { return Err(TSError::Parts) }
         range.into_iter()
             .zip(data.iter())
-            .map(|(date, &data)| DatePoint::new(date, data))
+            .map(|(date, &data)| DateValue::new(date, data))
             .collect::<TimeSeries<D, V>>()
             .into_regular(None, None)
     }
 }
 
-impl<D, V> FromIterator<DatePoint<D, V>> for TimeSeries<D, V>
-where
-    D: Date,
-    V: TryFrom<StringRecord, Error = TSError> + Copy,
-    <V as TryFrom<StringRecord>>::Error: Send + Sync + 'static,
+impl<D: Date, V: Value> FromIterator<DateValue<D, V>> for TimeSeries<D, V>
 {
     fn from_iter<T>(iter: T) -> Self
     where
-        T: IntoIterator<Item = DatePoint<D, V>>
+        T: IntoIterator<Item = DateValue<D, V>>
     {
         Self(iter.into_iter().collect())
     }
@@ -598,21 +548,14 @@ where
 
 /// An iterator over a `RegularTimeSeries`.
 #[derive(Debug)]
-pub struct RegularTimeSeriesIter<'a, D, V>
-where
-    D: Date,
-    V: TryFrom<StringRecord> + Copy,
+pub struct RegularTimeSeriesIter<'a, D: Date, V: Value>
 {
     inner_iter: DateRangeIter<D>,
-    date_points: &'a Vec<DatePoint<D, V>>,
+    date_points: &'a Vec<DateValue<D, V>>,
 }
 
-impl<'a, D, V> Iterator for RegularTimeSeriesIter<'a, D, V>
-where
-    D: Date,
-    V: TryFrom<StringRecord> + Copy
-{
-    type Item = DatePoint<D, V>;
+impl<'a, D: Date, V: Value> Iterator for RegularTimeSeriesIter<'a, D, V> {
+    type Item = DateValue<D, V>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match (&mut self.inner_iter).enumerate().next() {
@@ -626,26 +569,16 @@ where
 
 /// An iterator over the common dates of two `RegularTimeSeries`.
 #[derive(Debug)]
-pub struct ZipIter<'a, 'b, D, V1, V2>
-where
-    D: Date,
-    V1: TryFrom<StringRecord> + Copy,
-    V2: TryFrom<StringRecord> + Copy,
-{
+pub struct ZipIter<'a, 'b, D: Date, V1: Value, V2: Value> {
     inner_iter: DateRangeIter<D>,
     offset1: usize,
     offset2: usize,
-    date_points1: &'a Vec<DatePoint<D, V1>>,
-    date_points2: &'b Vec<DatePoint<D, V2>>,
+    date_points1: &'a Vec<DateValue<D, V1>>,
+    date_points2: &'b Vec<DateValue<D, V2>>,
 }
 
-impl<'a, 'b, D, V1, V2> Iterator for ZipIter<'a, 'b, D, V1, V2>
-where
-    D: Date,
-    V1: TryFrom<StringRecord> + Copy,
-    V2: TryFrom<StringRecord> + Copy,
-{
-    type Item = (DatePoint<D, V1>, DatePoint<D, V2>);
+impl<'a, 'b, D: Date, V1: Value, V2: Value> Iterator for ZipIter<'a, 'b, D, V1, V2> {
+    type Item = (DateValue<D, V1>, DateValue<D, V2>);
 
     fn next(&mut self) -> Option<Self::Item> {
         match (&mut self.inner_iter).enumerate().next() {
@@ -699,7 +632,7 @@ impl<D: Date> IntoIterator for DateRange<D> {
 
 // === DateRangeIter ==============================================================================
 
-/// Iterator over the dates in a range.
+/// Iterator over `DateRange`.
 #[derive(Debug)]
 pub struct DateRangeIter<D: Date> {
     count: Scale<D>,
@@ -720,6 +653,7 @@ impl<D: Date> Iterator for DateRangeIter<D> {
     }
 }
 
+/// A newtype to wrap `csv::StringRecord`.
 pub struct StringRecord(csv::StringRecord);
 
 impl StringRecord {
@@ -747,6 +681,7 @@ impl StringRecord {
     }
 }
 
+/// A newtype to wrap `csv::StringRecordIter`.
 pub struct StringRecordIter<'r>(csv::StringRecordIter<'r>);
 
 impl<'r> Iterator for StringRecordIter<'r> {
@@ -808,7 +743,7 @@ mod test {
         ).unwrap();
 
         if let Err(e) = ts.check_contiguous_over(&range) {
-            assert_eq!(e.to_string(), "Non-contiguity between lines [1] and [2]")
+            assert_eq!(e.to_string(), "Non-contiguity between lines 1 and 2")
         } else { assert!(false) }
     }
 
@@ -817,7 +752,7 @@ mod test {
         let csv_str = "2020-01-01, 1.2";
 
         if let Err(e) = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str, "%Y-%m-%d") {
-            assert_eq!(e.to_string(), "Record length mismatch at line [1]")
+            assert_eq!(e.to_string(), "Record length mismatch at line 1")
         } else { assert!(false) }
     }
 

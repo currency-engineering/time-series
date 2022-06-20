@@ -1,8 +1,18 @@
 
 use chrono::{Datelike};
-use crate::{StringRecord, Date, Scale, ts_error, TSError};
+use crate::{StringRecord, Date, Scale, ts_error, TSError, Value};
 use serde::{Serialize, Serializer};
 use std::{convert::{TryFrom}, fmt, marker::{Copy, PhantomData}};
+
+
+// This is implemented by the concrete type 
+//     /// Parse a `Date` from a string, given a format string.
+//     fn parse_from_str(fmt: &str, s: &str) -> Result<Self> {
+//         let nd = chrono::NaiveDate::parse_from_str(fmt, s)
+//             .map_err(|_| TSError::DateFromCSV(format!("Failed to parse date using fmt [{}]", fmt)))?;
+//         Ok(nd.into())
+//     }
+
 
 // === Shared Date Implementations ================================================================
 
@@ -65,17 +75,15 @@ impl Date for Monthly {
             month: (scale.scale % 12 + 1) as usize,
         }
     }
-}
 
-impl From<chrono::NaiveDate> for Monthly {
-    fn from(nd: chrono::NaiveDate) -> Self {
-        Monthly::ym(nd.year() as isize, nd.month() as usize)
+    fn parse_from_str(s: &str) -> Result<Self, TSError> {
+        let nd = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .map_err(|_| TSError::ParseDate(s.to_string()))?;
+        Ok(Monthly::ym(nd.year() as isize, nd.month() as usize))
     }
-}
 
-impl Into<chrono::NaiveDate> for Monthly {
-    fn into(self) -> chrono::NaiveDate {
-        chrono::NaiveDate::from_ymd(self.year as i32, self.month as u32, 1)
+    fn to_string(&self) -> String {
+        format!("{}-{:02}-01", self.year, self.month)
     }
 }
 
@@ -177,10 +185,9 @@ pub mod test {
 #[derive(Copy, Clone)]
 pub struct SingleF32(pub f32);
 
-impl TryFrom<StringRecord> for SingleF32 {
-    type Error = TSError;
+impl Value for SingleF32 {
 
-    fn try_from(record: StringRecord) -> Result<Self, Self::Error> {
+    fn from_csv_string(record: StringRecord) -> Result<Self, TSError> {
     
        if record.inner().len() != 1 { 
            return Err(TSError::Len("Expected records with a date and a single value.".to_owned()))
@@ -193,6 +200,10 @@ impl TryFrom<StringRecord> for SingleF32 {
                 .map_err(|_| ts_error("Failed to parse data", Some(&record), None))?
         ))
     }
+
+    fn to_csv_string(&self) -> String {
+        format!("{}", self.0)
+    }
 }
 
 // --- DoubleF32 ----------------------------------------------------------------------------------
@@ -201,10 +212,9 @@ impl TryFrom<StringRecord> for SingleF32 {
 #[derive(Copy, Clone)]
 pub struct DoubleF32(pub f32, pub f32);
 
-impl TryFrom<StringRecord> for DoubleF32 {
-    type Error = TSError;
+impl Value for DoubleF32 {
 
-    fn try_from(record: StringRecord) -> Result<Self, Self::Error> {
+    fn from_csv_string(record: StringRecord) -> Result<Self, TSError> {
     
        if record.inner().len() != 2 { 
            return Err(TSError::Len("Expected records with a date and two values.".to_owned()))
@@ -222,6 +232,10 @@ impl TryFrom<StringRecord> for DoubleF32 {
                 .map_err(|_| ts_error("Failed to parse data", Some(&record), None))?
             ,
         ))
+    }
+
+    fn to_csv_string(&self) -> String {
+        format!("{}, {}", self.0, self.1)
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "time_series"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Eric Findlay <e.findlay@protonmail.ch>"]
 edition = "2021"
 
