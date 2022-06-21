@@ -318,7 +318,7 @@ impl<D: Date, V: Value> DateValue<D, V> {
     }
 
     /// Return an array of data without the date.
-    pub fn data(&self) -> V {
+    pub fn value(&self) -> V {
         self.data
     }
 }
@@ -567,7 +567,7 @@ impl<D: Date, V: Value> RegularTimeSeries<D, V> {
     pub fn into_parts<'a>(self) -> (DateRange<D>, Vec<V>) {
     (
         self.range,
-        self.ts.0.iter().map(|dp| dp.data()).collect(),
+        self.ts.0.iter().map(|dp| dp.value()).collect(),
     )}
 
     /// Build a `RegularTimeSeries` from a range of dates and data.
