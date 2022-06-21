@@ -10,7 +10,7 @@
 //! use time_series::impls::{Monthly, SingleF32};
 //!
 //! // The standard procedure is to create a `TimeSeries` from `csv` data. `
-//! let ts = TimeSeries::<Monthly, SingleF32>::from_csv("./tests/test.csv", "%Y-%m-%d").unwrap();
+//! let ts = TimeSeries::<Monthly, SingleF32>::from_csv("./tests/test.csv").unwrap();
 //!
 //! // And then to convert to a regular time-series with ordered data over regular
 //! // intervals and no missing points.
@@ -54,7 +54,7 @@ pub mod impls;
 use thiserror::Error;
 use csv::{Reader, ReaderBuilder, Trim};
 use serde::{Serialize};
-use std::{ cmp::{min, max, Ordering}, convert::TryFrom, fmt::{Debug, Display, self} };
+use std::{ cmp::{min, max, Ordering}, fmt::{Debug, Display, self} };
 use std::{ io::Read, marker::{Copy, PhantomData}, ops::{Add, Sub} };
 
 type Result<T> = std::result::Result<T, TSError>;
@@ -77,7 +77,7 @@ type Result<T> = std::result::Result<T, TSError>;
 //     ) 
 // }
 
-// === Error Handling =============================================================================
+// === Helper functions for impls =============================================================================
 
 // // Given an error message, an optional position in csv string or file and an optional file path,
 // // return a full error message.
@@ -90,16 +90,73 @@ type Result<T> = std::result::Result<T, TSError>;
 //     }
 // }
 
+/// Helper function for building `Date` and `Value` impls. Returns the value part read from a
+/// `StringRecord` as a `String`.
+pub fn value_str(record: &StringRecord) -> String {
+   let mut csv_str = String::new();
+   for segment in record.iter().skip(1) {
+        csv_str.push_str(&segment);
+        csv_str.push(',');
+   }
+   csv_str.pop();
+   csv_str
+}
+
+// pub fn parse_data_err(record: &StringRecord) -> TSError {
+// 
+// 
+// }
+
+/// Helper function for building `Date` impls.
+pub fn parse_date_err(data_str: &str, fmt: &str) -> TSError {
+    TSError::ParseDateFmt(data_str.to_string(), fmt.to_string())
+}
+
+/// Helper function for building `Date` impls. An error if there are the wrong number of data
+/// segment in a CSV record.
+pub fn len_mismatch_err(record: &StringRecord, expected_len: usize) -> TSError {
+    TSError::Len(value_str(record), expected_len)
+}
+
+pub fn parse_field_err(seg: &str) -> TSError {
+    TSError::ParseField(seg.to_string())
+}
+
 #[derive(Debug, Error)]
 pub enum TSError {
+
+    // === Errors use in impls ====================================================================
+    
+    /// Error for if date does not parse. The first argument is the date that has been read from
+    /// the csv string, the second argument is the format string.
+    #[error("Failed to parse date '{0}' using fmt '{1}'.")]
+    ParseDateFmt(String, String),
+
+    /// Error for if csv crate responds with error on reading a CSV line.
+    #[error("Failed to read CSV line.")]
+    ParseCSVLine,
+
+    /// Error for when there is a mismatch in number of csv fields.
+    #[error("Expected {1} field(s) but found '{0}'.")]
+    Len(String, usize),
+
+    /// Error for when a segment failes to parse.
+    #[error("Failed to read CSV field '{0}'.")]
+    ParseField(String),
+
+    // === Other Errors ===========================================================================
+    
+    /// Error if parse error and debug data is available.
+    #[error("{0}")]
+    Csv(String),
 
     /// Error for if dates are in the wrong order.
     #[error("Start date {0} is later than end date {1}")]
     DateOrder(String, String),
 
-    /// Error for when reconstructing time-series from parts. 
-    #[error("The range of dates and the length of the data do not agree.")]
-    Parts,
+    /// Error for if time-series does not have at least one element.
+    #[error("TimeSeries must have at least one element.")]
+    Empty,
 
     /// File not found.
     #[error("{0}")]
@@ -108,26 +165,14 @@ pub enum TSError {
     /// Error for when dates do not have regular intervals.
     #[error("Non-contiguity between lines {0} and {1}")]
     Irregular(usize, usize),
-            
-    /// Error for if time-series does not have at least one element.
-    #[error("TimeSeries must have at least one element.")]
-    Empty,
-
-    /// Error for when there is a mismatch in number of csv fields.
-    #[error("{0}")]
-    Len(String),
-
-    /// Error if parse error and debug data is available.
-    #[error("{0}")]
-    CSV(String),
 
     /// Error for if value does not parse.
     #[error("{0}")]
     ParseValue(String),
 
-    /// Error for if data does not parse.
-    #[error("{0}")]
-    ParseDate(String),
+    /// Error for when reconstructing time-series from parts. 
+    #[error("The range of dates and the length of the data do not agree.")]
+    Parts,
 }
 
 /// A helper for client code to build error messages that may contain a position in the csv file
@@ -142,7 +187,7 @@ pub enum TSError {
 pub fn ts_error(msg: &str, record: Option<&StringRecord>, path: Option<&str>) -> TSError {
     let pos = record.map(|record| record.position()).flatten();
 
-    TSError::CSV(
+    TSError::Csv(
         match (pos, path) {
             (Some(pos), Some(path)) => format!("{} at line '{}' from '{}'", msg, pos.line(), path),
             (Some(pos), None) => format!("{} at line '{}'", msg, pos.line()),
@@ -302,7 +347,6 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
     // exists, for error messages.
     fn from_csv_inner<R: Read>(
         mut rdr: Reader<R>,
-        date_fmt: &str,
         opt_path: Option<&str>) -> Result<Self> 
     {
         let mut acc: Vec<DateValue<D, V>> = Vec::new();
@@ -310,16 +354,16 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
         let mut field_count: &mut Option<usize> = &mut None; 
 
         // Iterate over lines of csv
-        for result_record in rdr.records() {
+        for res_record in rdr.records() {
+
             let record = StringRecord(
-                result_record
-                    .map_err(|_| TSError::ParseDate(format!("Failed to read record")))?
+                res_record.map_err(|_| TSError::Csv("Failed to read CSV".to_owned()))?
             );
 
             check_field_count(&record, &mut field_count)?;
+
             let date: D = date_from_record(&record, opt_path)?;
-            let values: V = data_from_record(&record)
-                .map_err(|_| TSError::ParseValue("Failed to coerce to data type".to_owned()))?;
+            let values: V = data_from_record(&record)?;
 
             acc.push(DateValue::<D, V>::new(date, values));
         }
@@ -329,7 +373,7 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
 
     /// Create a new time-series from csv file. `date_fmt` specification can be found in the
     /// [chrono crate](https://docs.rs/chrono/latest/chrono/format/strftime/index.html#specifiers).
-    pub fn from_csv(path: &str, date_fmt: &str) -> Result<Self> {
+    pub fn from_csv(path: &str) -> Result<Self> {
 
         let rdr = ReaderBuilder::new()
             .has_headers(false)
@@ -337,7 +381,7 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
             .from_path(path)
             .map_err(|_| TSError::FilePath(format!("Failed to read file at [{}]", &path)))?;
 
-        TimeSeries::<D, V>::from_csv_inner(rdr, date_fmt, Some(&path))
+        TimeSeries::<D, V>::from_csv_inner(rdr, Some(&path))
     }
 
     /// Create a new time-series from csv file. Usually it is sufficient to use the default
@@ -345,25 +389,24 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
     /// configured `csv::ReaderBuilder`.
     pub fn from_csv_with_builder(
         path: &str,
-        date_fmt: &str,
         rdr_builder: ReaderBuilder) -> Result<Self>
     {
         let rdr = rdr_builder
             .from_path(path)
             .map_err(|_| TSError::FilePath(format!("Failed to read file at [{}]", &path)))?;
 
-        TimeSeries::<D, V>::from_csv_inner(rdr, date_fmt, Some(&path))
+        TimeSeries::<D, V>::from_csv_inner(rdr, Some(&path))
     }
 
     /// Create a new time-series from a string in csv format.
-    pub fn from_csv_str(csv: &str, date_fmt: &str) -> Result<Self> {
+    pub fn from_csv_str(csv: &str) -> Result<Self> {
 
         let rdr = ReaderBuilder::new()
             .has_headers(false)
             .trim(Trim::All)
             .from_reader(csv.as_bytes());
 
-        TimeSeries::<D, V>::from_csv_inner(rdr, date_fmt, None)
+        TimeSeries::<D, V>::from_csv_inner(rdr, None)
     }
 
     /// Create a new time-series from csv file. Usually it is sufficient to use the default
@@ -371,11 +414,10 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
     /// `csv::ReaderBuilder` can be used as an argument.
     pub fn from_csv_str_with_builder(
         csv: &str,
-        date_fmt: &str,
         rdr_builder: ReaderBuilder) -> Result<Self> 
     {
         let rdr = rdr_builder.from_reader(csv.as_bytes());
-        TimeSeries::<D, V>::from_csv_inner(rdr, date_fmt, None)
+        TimeSeries::<D, V>::from_csv_inner(rdr, None)
     }
 
     pub fn len(&self) -> usize {
@@ -434,7 +476,7 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
 fn date_from_record<D: Date>(record: &StringRecord, _opt_path: Option<&str>) -> Result<D> {
     let line = record.position().map(|pos| format!("{}", pos.line())).unwrap_or("?".to_owned());
     let date_str = record.get(0)
-        .ok_or(TSError::ParseDate(format!("Empty record on line [{}]", line)))?;
+        .ok_or(TSError::Csv(format!("Empty record on line [{}]", line)))?;
     <D as Date>::parse_from_str(date_str)
 }
 
@@ -463,13 +505,13 @@ fn check_field_count<'a>(
 // Return an error message.
 fn record_err(record: &StringRecord, previous: usize) -> TSError {
     match record.position() {
-        Some(pos) => {TSError::Len(format!(
+        Some(pos) => {TSError::Csv(format!(
             "Record at line {} has length {} but previous field has length {}.",
             pos.line(),
             previous,
             record.len()
         ))},
-        None => {TSError::Len(format!(
+        None => {TSError::Csv(format!(
             "Record has length {} but previous field has length {}.", previous, record.len()
         ))},
     }
@@ -494,6 +536,11 @@ impl<D: Date, V: Value> RegularTimeSeries<D, V> {
             date_points: &self.ts.0,
         } 
     }
+
+    // pub fn into_csv(&self) -> String {
+
+    //     fail here
+    // }
 
     /// Returns an iterator that zips up the common dates in two `RegularTimeSeries`.
     pub fn zip_iter<'a, 'b, V2: Value>(
@@ -654,6 +701,7 @@ impl<D: Date> Iterator for DateRangeIter<D> {
 }
 
 /// A newtype to wrap `csv::StringRecord`.
+#[derive(Debug)]
 pub struct StringRecord(csv::StringRecord);
 
 impl StringRecord {
@@ -722,7 +770,7 @@ mod test {
             2020-02-01, 1.3
             2020-03-01, 1.4
         "};
-        let ts = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
+        let ts = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str).unwrap();
         let range = DateRange::new(
             Monthly::ym(2020,1),
             Monthly::ym(2020,3),
@@ -736,7 +784,7 @@ mod test {
             2020-01-01, 1.2
             2021-01-01, 1.3
         "};
-        let ts = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
+        let ts = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str).unwrap();
         let range = DateRange::new(
             Monthly::ym(2020,1),
             Monthly::ym(2020,3),
@@ -750,16 +798,15 @@ mod test {
     #[test]
     fn from_csv_should_fail_when_wrong_length() {
         let csv_str = "2020-01-01, 1.2";
-
-        if let Err(e) = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str, "%Y-%m-%d") {
-            assert_eq!(e.to_string(), "Record length mismatch at line 1")
+        if let Err(e) = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str) {
+            assert_eq!(e.to_string(), "Expected 2 field(s) but found '1.2'.")
         } else { assert!(false) }
     }
 
     #[test]
     fn timeseries_should_have_at_least_one_element() {
         let csv_str = "";
-        if let Err(e) = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str, "%Y-%m-%d") {
+        if let Err(e) = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str) {
             assert_eq!(e.to_string(), "TimeSeries must have at least one element.")
         } else { assert!(false) }
     }
@@ -767,7 +814,7 @@ mod test {
     #[test]
     fn creating_timeseries_from_csv_should_work() {
         let csv_str = "2020-01-01, 1.2";
-        let ts = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
+        let ts = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str).unwrap();
         assert_eq!(ts.len(), 1);
     }
 
@@ -789,7 +836,7 @@ mod test {
             2020-01-01, 1.2, 4.0
             2021-01-01, 1.3, 4.1
         "};
-        let ts = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str, "%Y-%m-%d").unwrap();
+        let ts = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str).unwrap();
         assert_eq!(ts.len(), 2);
     }
 
@@ -804,4 +851,13 @@ mod test {
             Monthly::ym(2018, 6).to_scale(),
         );
     }
+
+    // #[test]
+    // fn should_read_csv() {
+    //     let csv = "
+    //         2018-06-01, 1.2
+    //         2018-07-01, 1.3";
+    //     let ts = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str).unwrap();
+    //     assert_eq!(ts.len(), 2);
+    // }
 }

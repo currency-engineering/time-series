@@ -1,8 +1,8 @@
 
 use chrono::{Datelike};
-use crate::{StringRecord, Date, Scale, ts_error, TSError, Value};
+use crate::*;
 use serde::{Serialize, Serializer};
-use std::{convert::{TryFrom}, fmt, marker::{Copy, PhantomData}};
+use std::{fmt, marker::{Copy, PhantomData}};
 
 
 // This is implemented by the concrete type 
@@ -12,7 +12,6 @@ use std::{convert::{TryFrom}, fmt, marker::{Copy, PhantomData}};
 //             .map_err(|_| TSError::DateFromCSV(format!("Failed to parse date using fmt [{}]", fmt)))?;
 //         Ok(nd.into())
 //     }
-
 
 // === Shared Date Implementations ================================================================
 
@@ -76,9 +75,10 @@ impl Date for Monthly {
         }
     }
 
-    fn parse_from_str(s: &str) -> Result<Self, TSError> {
-        let nd = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-            .map_err(|_| TSError::ParseDate(s.to_string()))?;
+    fn parse_from_str(s: &str) -> Result<Self> {
+        let fmt = "%Y-%m-%d";
+        let nd = chrono::NaiveDate::parse_from_str(s, fmt)
+            .map_err(|_| parse_date_err(s, fmt))?;
         Ok(Monthly::ym(nd.year() as isize, nd.month() as usize))
     }
 
@@ -163,20 +163,6 @@ impl fmt::Debug for Monthly {
 // 
 // impl FromScale<Scale<Quarterly>> for Scale<Monthly> {
 
-#[cfg(test)]
-pub mod test {
-
-    use crate::{
-        DateRange,
-        impls::Monthly,
-    };
-
-    #[test]
-    fn creating_daterange_from_monthly_dates_should_work() {
-        DateRange::new(Monthly::ym(2020, 1), Monthly::ym(2021, 1));
-    }
-}
-
 // === Shared Transform Implementations ===========================================================
 
 // --- SingleF32 ----------------------------------------------------------------------------------
@@ -187,18 +173,13 @@ pub struct SingleF32(pub f32);
 
 impl Value for SingleF32 {
 
-    fn from_csv_string(record: StringRecord) -> Result<Self, TSError> {
-    
-       if record.inner().len() != 1 { 
-           return Err(TSError::Len("Expected records with a date and a single value.".to_owned()))
-       }
-
-       Ok(SingleF32(
-           record.inner().get(0)
-                .ok_or(ts_error("Failed to get a singular value", Some(&record), None))?
-                .parse()
-                .map_err(|_| ts_error("Failed to parse data", Some(&record), None))?
-        ))
+    fn from_csv_string(record: StringRecord) -> Result<Self> {
+        if record.inner().len() != 1 { 
+            return Err(len_mismatch_err(&record, 1))
+        }
+        let field = record.inner().get(0).unwrap();
+        let n: f32 = field.parse().map_err(|_| parse_field_err(field))?;
+        Ok(SingleF32(n))
     }
 
     fn to_csv_string(&self) -> String {
@@ -214,31 +195,22 @@ pub struct DoubleF32(pub f32, pub f32);
 
 impl Value for DoubleF32 {
 
-    fn from_csv_string(record: StringRecord) -> Result<Self, TSError> {
-    
-       if record.inner().len() != 2 { 
-           return Err(TSError::Len("Expected records with a date and two values.".to_owned()))
-       }
-
-       Ok(DoubleF32(
-           record.inner().get(0)
-                .ok_or(ts_error("Failed to get date", Some(&record), None))?
-                .parse()
-                .map_err(|_| ts_error("Failed to parse date", Some(&record), None))?
-            ,
-           record.inner().get(1)
-                .ok_or(ts_error("Failed to get data", Some(&record), None))?
-                .parse()
-                .map_err(|_| ts_error("Failed to parse data", Some(&record), None))?
-            ,
-        ))
+    fn from_csv_string(record: StringRecord) -> Result<Self> {
+        if record.inner().len() != 2 { 
+            return Err(len_mismatch_err(&record, 2))
+        }
+        let field1 = record.inner().get(1).unwrap();
+        let field2 = record.inner().get(2).unwrap();
+        let n1: f32 = field1.parse().map_err(|_| parse_field_err(field1))?;
+        let n2: f32 = field2.parse().map_err(|_| parse_field_err(field2))?;
+        Ok(DoubleF32(n1, n2))
     }
 
     fn to_csv_string(&self) -> String {
-        format!("{}, {}", self.0, self.1)
+        format!("{}", self.0)
     }
 }
-
+    
 // === Transforms =================================================================================
 
     // let ts = TimeSeries::from_csv
@@ -268,3 +240,29 @@ impl Value for DoubleF32 {
 // }
 
 // Need to align the zips.
+
+#[cfg(test)]
+pub mod test {
+
+    use crate::{
+        DateRange,
+        impls::{DoubleF32, Monthly},
+        TimeSeries,
+    };
+
+    #[test]
+    fn creating_daterange_from_monthly_dates_should_work() {
+        DateRange::new(Monthly::ym(2020, 1), Monthly::ym(2021, 1));
+    }
+
+    #[test]
+    fn date_should_fail_with_error() {
+        let csv = "2018-06-001, 1.2";
+        if let Err(e) = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv) {
+            assert_eq!(
+                e.to_string(),
+                "Failed to parse date '2018-06-001' using fmt '%Y-%m-%d'.",
+            )
+        } else { assert!(false) }
+    }
+}
