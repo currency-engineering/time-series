@@ -236,9 +236,17 @@ impl<D: Date> fmt::Display for Scale<D> {
 }
 
 impl<D: Date> Scale<D> {
+    pub fn new(scale: isize) -> Self {
+        Scale {
+            scale,
+            _phantom: PhantomData,
+        }
+    }
+
     pub fn inner(&self) -> isize {
         self.scale
     }
+
 
     fn to_date(&self) -> D {
         Date::from_scale(*self)
