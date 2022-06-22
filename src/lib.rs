@@ -207,7 +207,7 @@ pub fn ts_error(msg: &str, record: Option<&StringRecord>, path: Option<&str>) ->
 /// scale. Each CSV format requires its own implementation.
 pub trait Date
 where
-    Self: Serialize + Debug + Display + Copy,
+    Self: Serialize + Debug + Display + Copy + PartialEq,
 {
     /// Associate a number with every `Date` value.
     fn to_scale(&self) -> Scale<Self>;
@@ -334,15 +334,6 @@ pub struct TimeSeries<D: Date, V: Value>(Vec<DateValue<D, V>>);
 
 impl<D: Date, V: Value> TimeSeries<D, V> {
 
-    fn first_datepoint(&self) -> DateValue<D, V> {
-        *self.0.first().unwrap()
-    }
-
-    fn last_datepoint(&self) -> DateValue<D, V> {
-        *self.0.last().unwrap()
-    }
-    // What kind of values can be parsed from csv? See csv crate.
-
     // Having an inner function allows from_csv() to read either from a file of from a string, or
     // to build a customized csv reader. The `opt_path_str` argument contains the file name if it
     // exists, for error messages.
@@ -431,7 +422,7 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
         match self.0.windows(2)
             .position(|window| window[0].date().to_scale() + 1 != window[1].date().to_scale())
         {
-            Some(pos) => Err(TSError::Irregular(pos, pos + 1)),
+            Some(pos) => Err(TSError::Irregular(pos + 1, pos + 2)),
             None => Ok(()),
         }
     }
@@ -448,7 +439,11 @@ impl<D: Date, V: Value> TryFrom<TimeSeries<D, V>> for RegularTimeSeries<D, V> {
     type Error = TSError;
 
     fn try_from(value: TimeSeries<D, V>) -> Result<RegularTimeSeries<D, V>> {
+        dbg!();
+        assert!(false);
         value.check_contiguous()?;
+        dbg!();
+        assert!(false);
         value.try_into()
     }
 }
@@ -685,7 +680,7 @@ impl<D: Date> DateRange<D> {
     }
 
     /// Return a new `DateRange` with dates common to the input `DateRange`s.
-    pub fn common(&self, other: &DateRange<D>) -> DateRange<D> {
+    pub fn intersection(&self, other: &DateRange<D>) -> DateRange<D> {
         let start = max(self.start, other.start);
         let end = min(self.end, other.end);
         DateRange { start, end } 
@@ -802,7 +797,7 @@ mod test {
             Monthly::ym(2020,1),
             Monthly::ym(2020,3),
         ).unwrap();
-        if let Ok(()) = ts.check_contiguous_over(&range) { assert!(true) } else { assert!(false) }
+        if let Ok(()) = ts.check_contiguous() { assert!(true) } else { assert!(false) }
     }
 
     #[test]
@@ -812,12 +807,8 @@ mod test {
             2021-01-01, 1.3
         "};
         let ts = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str).unwrap();
-        let range = DateRange::new(
-            Monthly::ym(2020,1),
-            Monthly::ym(2020,3),
-        ).unwrap();
 
-        if let Err(e) = ts.check_contiguous_over(&range) {
+        if let Err(e) = ts.check_contiguous() {
             assert_eq!(e.to_string(), "Non-contiguity between lines 1 and 2")
         } else { assert!(false) }
     }
@@ -870,14 +861,38 @@ mod test {
     // === DateRange tests =======================================================================
 
     #[test]
-    fn common_daterange_should_work() {
+    fn intersection_of_dateranges_should_work() {
         let dr1 = DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2019, 6)).unwrap();
         let dr2 = DateRange::new(Monthly::ym(2018, 1), Monthly::ym(2019, 1)).unwrap();
         assert_eq!(
-            dr1.common(&dr2).start,
+            dr1.intersection(&dr2).start,
             Monthly::ym(2018, 6).to_scale(),
         );
     }
+
+    #[test]
+    fn duration_of_daterange_should_work() {
+        assert_eq!(
+            DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2019, 6)).unwrap().duration(),
+            12,
+        );
+        assert_eq!(
+            DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2018, 6)).unwrap().duration(),
+            0,
+        );
+        if let Err(TSError::DateOrder(_, _)) = DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2017, 11)) {
+            assert!(true);
+        } else { assert!(false) };
+    }
+
+    #[test]
+    fn duration_should_convert_to_iterator() {
+        let mut iter = DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2019, 6)).unwrap().into_iter();
+        assert_eq!(iter.next(), Some(Monthly::ym(2018, 6)));
+        assert_eq!(iter.next(), Some(Monthly::ym(2018,7)));
+    }
+
+    // 
 
     // #[test]
     // fn should_read_csv() {
@@ -887,10 +902,5 @@ mod test {
     //     let ts = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str).unwrap();
     //     assert_eq!(ts.len(), 2);
     // }
-
-    #[test]
-    fn check_contiguous_should_work() {
-        assert!(false); 
-    }
 }
 

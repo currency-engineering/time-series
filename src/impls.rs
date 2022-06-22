@@ -20,7 +20,7 @@ use std::{fmt, marker::{Copy, PhantomData}};
 /// A date with monthly granularity or larger.
 ///
 /// Client code is responsible for parsing strings into `Monthly`s.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Monthly {
     pub year: isize,
     pub month: usize,
@@ -168,7 +168,7 @@ impl fmt::Debug for Monthly {
 // --- SingleF32 ----------------------------------------------------------------------------------
 
 // A time series where each date is associated with a single `f32` of data.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct SingleF32(pub f32);
 
 impl Value for SingleF32 {
@@ -190,7 +190,7 @@ impl Value for SingleF32 {
 // --- DoubleF32 ----------------------------------------------------------------------------------
 
 // A time series where each date is associated with a single `f32` of data.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct DoubleF32(pub f32, pub f32);
 
 impl Value for DoubleF32 {
