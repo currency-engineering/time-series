@@ -14,28 +14,8 @@
 //!
 //! // And then to convert to a regular time-series with ordered data over regular
 //! // intervals and no missing points.
-//! let rts = ts.into_regular(None, Some(Monthly::ym(2013,1))).unwrap();
+//! let rts: RegularTimeSeries::<Monthly, SingleF32> = ts.try_into().unwrap();
 //! ```
-//! #### Working with `RegularTimeSeries`
-//!
-//! Most of the transformations we want to make on a `RegularTimesSeries` can be done using it as an
-//! iterator and mapping from one `DateValue` to another. We need to do a conversion from a
-//! `TimeSeries` to a `RegularTimeSeries` at the end to verify that the time-series is still
-//! contiguous.
-//!
-//! ```ignore
-//! let single_column: RegularTimeSeries<Monthly, SingleF32> = regular_time_series
-//!     .iter()
-//!     .map(|datepoint| datepoint.0)
-//!     .collect::<TimeSeries<D, N>>()
-//!     .into_regular(None, None).unwrap();
-//! ```
-//!
-//! #### Changing the time scale.
-//!
-//! When we want to do transformations that change the date scaling, we can break the
-//! `RegularTimeSeries` into columns and then rebuild a new `RegularTimeSeries` from the parts. 
-//!
 //! #### Dates
 //!
 //! Dates that implement the `Date` trait map directly to a `Scale` that maps directly back.
@@ -46,13 +26,45 @@
 //!     Monthly::ym(2020,1),
 //! )
 //! ```
+//!
+//! #### Implementations
+//!
+//! In general the client library will need to implement their own `Value` because each concrete
+//! type defines its own format. An example `Value` that reads a single `f32` from a CSV file looks
+//! like
+//!
+//! ```
+//! // A time series where each date is associated with a single `f32` of data.
+//! #[derive(Copy, Clone, Debug)]
+//! pub struct SingleF32(pub f32);
+//! 
+//! impl Value for SingleF32 {
+//! 
+//!     fn from_csv_string(record: StringRecord) -> Result<Self> {
+//!         if record.inner().len() != 1 { 
+//!             return Err(len_mismatch_err(&record, 1))
+//!         }
+//!         let field = record.inner().get(0).unwrap();
+//!         let n: f32 = field.parse().map_err(|_| parse_field_err(field))?;
+//!         Ok(SingleF32(n))
+//!     }
+//! 
+//!     fn to_csv_string(&self) -> String {
+//!         format!("{}", self.0)
+//!     }
+//! }
+//! 
+//! impl fmt::Display for SingleF32 {
+//!     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//!         write!(f, "SingleF32({})", self.0)
+//!     }
+//! }
+//! ```
+//! 
 
 /// Some common [`Date`](trait.Date.html), Transform, and [`Value>`](traitValue.html)
 /// implementations.
 pub mod impls;
-
-/// Impls for transforming a `RegularTimeSeries` to another.
-pub mod transforms;
 
 use thiserror::Error;
 use csv::{Reader, ReaderBuilder, Trim};
@@ -170,13 +182,6 @@ pub enum TSError {
 
 /// A helper for client code to build error messages that may contain a position in the csv file
 /// and its file path. For example,
-/// ```
-/// let pos = csv::Position.set_line(4);
-/// let path = "data.csv";
-///
-/// ts_error = ts_error("Failed to read date", Some(pos.line()), Some(path));
-/// assert_eq!(ts_error, "Failed to read date at line [4] from [data.csv]");
-/// ```
 pub fn ts_error(msg: &str, record: Option<&StringRecord>, path: Option<&str>) -> TSError {
     let pos = record.map(|record| record.position()).flatten();
 
@@ -279,7 +284,7 @@ impl<D: Date> Eq for Scale<D> {}
 // === Value ======================================================================================
 
 /// A `Value` can be anything that can be read from a `csv::StringRecord`.
-pub trait Value: Copy {
+pub trait Value: Debug + Display + Copy {
 
     fn from_csv_string(record: StringRecord) -> Result<Self>
     where
@@ -428,11 +433,29 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
 impl<D: Date, V: Value> TryFrom<TimeSeries<D, V>> for RegularTimeSeries<D, V> {
     type Error = TSError;
 
-    fn try_from(value: TimeSeries<D, V>) -> Result<RegularTimeSeries<D, V>> {
-        value.check_contiguous()?;
-        value.try_into()
+    fn try_from(ts: TimeSeries<D, V>) -> Result<RegularTimeSeries<D, V>> {
+        ts.check_contiguous()?;
+        let dr = DateRange::new(
+            ts.0.first().unwrap().date(),
+            ts.0.last().unwrap().date(),
+        )?;
+        Ok(RegularTimeSeries {
+            range: dr,
+            values: ts.iter().map(|dv| dv.value()).collect(),
+        })
     }
 }
+
+// impl<D: Date, V: Value> TryFrom<TimeSeries<D, V>> for RegularTimeSeries<D, V> {
+//     type Error = TSError;
+// 
+//     fn try_from(value: TimeSeries<D, V>) -> Result<RegularTimeSeries<D, V>> {
+//         dbg!(&value);
+//         value.check_contiguous()?;
+//         std::process::exit(1);
+//         value.try_into()
+//     }
+// }
 
 // fn date_from_csv_error(record: &StringRecord, opt_path: Option<&str>) -> TSError {
 //     match (record.position(), opt_path) {
@@ -744,6 +767,18 @@ impl StringRecord {
 
     fn position(&self) -> Option<&csv::Position> {
         self.0.position()
+    }
+}
+
+impl fmt::Display for StringRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut csv_str = String::new();
+        for segment in self.0.iter() {
+             csv_str.push_str(&segment);
+             csv_str.push(',' );
+        }
+        csv_str.pop();
+        write!(f, "{}", csv_str)
     }
 }
 

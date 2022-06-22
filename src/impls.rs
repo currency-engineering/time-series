@@ -187,6 +187,12 @@ impl Value for SingleF32 {
     }
 }
 
+impl fmt::Display for SingleF32 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SingleF32({})", self.0)
+    }
+}
+
 // --- DoubleF32 ----------------------------------------------------------------------------------
 
 // A time series where each date is associated with a single `f32` of data.
@@ -208,6 +214,12 @@ impl Value for DoubleF32 {
 
     fn to_csv_string(&self) -> String {
         format!("{}", self.0)
+    }
+}
+
+impl fmt::Display for DoubleF32 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "DoubleF32({}, {})", self.0, self.1)
     }
 }
     
