@@ -51,11 +51,14 @@
 /// implementations.
 pub mod impls;
 
+/// Impls for transforming a `RegularTimeSeries` to another.
+pub mod transforms;
+
 use thiserror::Error;
 use csv::{Reader, ReaderBuilder, Trim};
 use serde::{Serialize};
 use std::{ cmp::{min, max, Ordering}, fmt::{Debug, Display, self} };
-use std::{ io::Read, marker::{Copy, PhantomData}, ops::{Add, Sub} };
+use std::{ io::Read, iter::zip, marker::{Copy, PhantomData}, ops::{Add, Sub} };
 
 type Result<T> = std::result::Result<T, TSError>;
 
@@ -201,8 +204,7 @@ pub fn ts_error(msg: &str, record: Option<&StringRecord>, path: Option<&str>) ->
 
 //  TODO: This should also implement Serialize
 /// A `Date` can best be thought of as a time_scale, with a pointer to one of the marks on the
-/// scale. `Date`s implement `From<chrono::NaiveDate>` and `Into<chrono::NaiveDate>` which provides
-/// functionality such as `parse_from_str()` among other things.
+/// scale. Each CSV format requires its own implementation.
 pub trait Date
 where
     Self: Serialize + Debug + Display + Copy,
@@ -339,7 +341,6 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
     fn last_datepoint(&self) -> DateValue<D, V> {
         *self.0.last().unwrap()
     }
-
     // What kind of values can be parsed from csv? See csv crate.
 
     // Having an inner function allows from_csv() to read either from a file of from a string, or
@@ -424,37 +425,31 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
         self.0.len()
     }
 
-    // Convert a `TimeSeries` into a `RegularTimeSeries` which guarantees that there are no gaps in
-    // the data.
-    pub fn into_regular(
-        self, 
-        start_date: Option<D>, 
-        end_date: Option<D>) -> Result<RegularTimeSeries<D, V>>
-    {
-        let range = DateRange::new(
-            start_date.unwrap_or(self.first_datepoint().date()),
-            end_date.unwrap_or(self.last_datepoint().date()),
-        )?;
-
-        self.check_contiguous_over(&range)?;
-        Ok(RegularTimeSeries { range, ts: self })
-    }
-
     // Fails if dates are not contiguous over the range.
-    pub fn check_contiguous_over(&self, range: &DateRange<D>) -> Result<()> {
+    pub fn check_contiguous(&self) -> Result<()> {
 
-        // Build time_series iter that removes everything before first date
-        let ts_iter = self.0.iter().skip_while(|dp| dp.date().to_scale() != range.start);
-
-        // Zip to date iter and check that dates are the same.
-        let check: Option<usize> = range.into_iter()
-            .zip(ts_iter)
-            .position(|(date, dp)| date.to_scale() != dp.date().to_scale());
-
-        match check {
-            Some(i) => Err(TSError::Irregular(i, i+1)),
+        match self.0.windows(2)
+            .position(|window| window[0].date().to_scale() + 1 != window[1].date().to_scale())
+        {
+            Some(pos) => Err(TSError::Irregular(pos, pos + 1)),
             None => Ok(()),
         }
+    }
+
+    pub fn iter<'a>(&'a self) -> TimeSeriesIter<'a, D, V> {
+        TimeSeriesIter {
+            data: &self,
+            count: 0,
+        }
+    }
+}
+
+impl<D: Date, V: Value> TryFrom<TimeSeries<D, V>> for RegularTimeSeries<D, V> {
+    type Error = TSError;
+
+    fn try_from(value: TimeSeries<D, V>) -> Result<RegularTimeSeries<D, V>> {
+        value.check_contiguous()?;
+        value.try_into()
     }
 }
 
@@ -517,6 +512,32 @@ fn record_err(record: &StringRecord, previous: usize) -> TSError {
     }
 }
 
+
+
+// === TimeSeriesIter ======================================================================
+
+/// An iterator over a `TimeSeries`.
+#[derive(Debug)]
+pub struct TimeSeriesIter<'a, D: Date, V: Value>
+{
+    data: &'a TimeSeries<D, V>,
+    count: usize,
+}
+
+impl<'a, D: Date, V: Value> Iterator for TimeSeriesIter<'a, D, V> {
+    type Item = DateValue<D, V>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.count < self.data.len() {
+            true => {
+                self.count += 1;
+                Some(self.data.0[self.count - 1])
+            },
+            false => None,
+        }
+    }
+}
+
 // === RegularTimeSeries ==========================================================================
 
 /// A time-series with regular, contiguous data and at least one `DateValue`.
@@ -524,16 +545,21 @@ fn record_err(record: &StringRecord, previous: usize) -> TSError {
 /// A `RegularTimeSeries` is guaranteed to have one or more data points.
 #[derive(Debug, Serialize)]
 pub struct RegularTimeSeries<D: Date, V: Value> {
-    range:  DateRange<D>,
-    ts:     TimeSeries<D, V>,
+    // We do it this way for efficiency
+    range: DateRange<D>,
+    values: Vec<V>,
 }
 
 impl<D: Date, V: Value> RegularTimeSeries<D, V> {
+    fn range(&self) -> DateRange<D> {
+        self.range
+    }
+
     /// Returns an iterator over `Self`.
     pub fn iter<'a>(&'a self) -> RegularTimeSeriesIter<'a, D, V> {
         RegularTimeSeriesIter {
             inner_iter: self.range.into_iter(),
-            date_points: &self.ts.0,
+            values: &self.values,
         } 
     }
 
@@ -542,32 +568,32 @@ impl<D: Date, V: Value> RegularTimeSeries<D, V> {
     //     fail here
     // }
 
-    /// Returns an iterator that zips up the common dates in two `RegularTimeSeries`.
-    pub fn zip_iter<'a, 'b, V2: Value>(
-        &'a self,
-        other: &'b RegularTimeSeries<D, V2>) -> ZipIter<'a, 'b, D, V, V2> {
-        // The offsets are guaranteed to be positive due to the common() fn, and so can be
-        // unwrapped.
-        let date_range = self.range.common(&other.range);
-        let offset1: usize = (self.range.start.inner() - date_range.start.inner())
-            .try_into().unwrap();
-        let offset2: usize = (other.range.start.inner() - date_range.start.inner())
-            .try_into().unwrap();
-        ZipIter {
-            inner_iter: date_range.into_iter(), 
-            offset1,
-            offset2,
-            date_points1: &self.ts.0,
-            date_points2: &other.ts.0,
-        }
-    }
+    // /// Returns an iterator that zips up the common dates in two `RegularTimeSeries`.
+    // pub fn zip_iter<'a, 'b, V2: Value>(
+    //     &'a self,
+    //     other: &'b RegularTimeSeries<D, V2>) -> ZipIter<'a, 'b, D, V, V2> {
+    //     // The offsets are guaranteed to be positive due to the common() fn, and so can be
+    //     // unwrapped.
+    //     let date_range = self.range.common(&other.range);
+    //     let offset1: usize = (self.range.start.inner() - date_range.start.inner())
+    //         .try_into().unwrap();
+    //     let offset2: usize = (other.range.start.inner() - date_range.start.inner())
+    //         .try_into().unwrap();
+    //     ZipIter {
+    //         inner_iter: date_range.into_iter(), 
+    //         offset1,
+    //         offset2,
+    //         date_points1: &self.0,
+    //         date_points2: &other.0,
+    //     }
+    // }
 
     /// Breaks `Self` into raw components. This is useful when building a new `RegularTimeSeries`
     /// with a different scale.
     pub fn into_parts<'a>(self) -> (DateRange<D>, Vec<V>) {
     (
-        self.range,
-        self.ts.0.iter().map(|dp| dp.value()).collect(),
+        self.range(),
+        self.iter().map(|dp| dp.value()).collect(),
     )}
 
     /// Build a `RegularTimeSeries` from a range of dates and data.
@@ -577,7 +603,7 @@ impl<D: Date, V: Value> RegularTimeSeries<D, V> {
             .zip(data.iter())
             .map(|(date, &data)| DateValue::new(date, data))
             .collect::<TimeSeries<D, V>>()
-            .into_regular(None, None)
+            .try_into()
     }
 }
 
@@ -598,15 +624,16 @@ impl<D: Date, V: Value> FromIterator<DateValue<D, V>> for TimeSeries<D, V>
 pub struct RegularTimeSeriesIter<'a, D: Date, V: Value>
 {
     inner_iter: DateRangeIter<D>,
-    date_points: &'a Vec<DateValue<D, V>>,
+    values: &'a Vec<V>,
 }
 
 impl<'a, D: Date, V: Value> Iterator for RegularTimeSeriesIter<'a, D, V> {
     type Item = DateValue<D, V>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match (&mut self.inner_iter).enumerate().next() {
-            Some(i) => Some(self.date_points[i.0]),
+        let mut iter = zip(self.inner_iter, self.values);
+        match iter.next() {
+            Some((date, value)) => Some(DateValue::new(date, *value)),
             None => None,
         }
     }
@@ -680,7 +707,7 @@ impl<D: Date> IntoIterator for DateRange<D> {
 // === DateRangeIter ==============================================================================
 
 /// Iterator over `DateRange`.
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct DateRangeIter<D: Date> {
     count: Scale<D>,
     range: DateRange<D>,
@@ -860,4 +887,10 @@ mod test {
     //     let ts = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str).unwrap();
     //     assert_eq!(ts.len(), 2);
     // }
+
+    #[test]
+    fn check_contiguous_should_work() {
+        assert!(false); 
+    }
 }
+
