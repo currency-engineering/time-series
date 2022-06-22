@@ -59,13 +59,10 @@ pub mod test {
             2018-09-01, 1.5
             2018-10-01, 1.6";
 
-        dbg!();
-
         let ts = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv).unwrap();
 
-        dbg!(&ts);
-
         assert!(false);
+
         let rts: RegularTimeSeries<Monthly, SingleF32> = ts 
             .try_into()
             .unwrap();

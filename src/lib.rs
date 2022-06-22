@@ -93,18 +93,6 @@ type Result<T> = std::result::Result<T, TSError>;
 //     }
 // }
 
-/// Helper function for building `Date` and `Value` impls. Returns the value part read from a
-/// `StringRecord` as a `String`.
-pub fn value_str(record: &StringRecord) -> String {
-   let mut csv_str = String::new();
-   for segment in record.iter().skip(1) {
-        csv_str.push_str(&segment);
-        csv_str.push(',');
-   }
-   csv_str.pop();
-   csv_str
-}
-
 // pub fn parse_data_err(record: &StringRecord) -> TSError {
 // 
 // 
@@ -118,7 +106,9 @@ pub fn parse_date_err(data_str: &str, fmt: &str) -> TSError {
 /// Helper function for building `Date` impls. An error if there are the wrong number of data
 /// segment in a CSV record.
 pub fn len_mismatch_err(record: &StringRecord, expected_len: usize) -> TSError {
-    TSError::Len(value_str(record), expected_len)
+    dbg!(&record);
+    dbg!(&record.as_string());
+    TSError::Len(record.as_string(), expected_len)
 }
 
 pub fn parse_field_err(seg: &str) -> TSError {
@@ -412,7 +402,7 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
         TimeSeries::<D, V>::from_csv_inner(rdr, None)
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
 
@@ -439,11 +429,7 @@ impl<D: Date, V: Value> TryFrom<TimeSeries<D, V>> for RegularTimeSeries<D, V> {
     type Error = TSError;
 
     fn try_from(value: TimeSeries<D, V>) -> Result<RegularTimeSeries<D, V>> {
-        dbg!();
-        assert!(false);
         value.check_contiguous()?;
-        dbg!();
-        assert!(false);
         value.try_into()
     }
 }
@@ -728,6 +714,16 @@ pub struct StringRecord(csv::StringRecord);
 
 impl StringRecord {
 
+    pub fn as_string(&self) -> String {
+        let mut csv_str = String::new();
+        for segment in self.0.iter() {
+             csv_str.push_str(&segment);
+             csv_str.push(',' );
+        }
+        csv_str.pop();
+        csv_str
+    }
+
     pub fn inner(&self) -> &csv::StringRecord {
         &self.0
     }
@@ -850,10 +846,10 @@ mod test {
 
     #[test]
     fn mapping_a_timeseries_should_work() {
-        let csv_str = indoc! {"
+        let csv_str = "
             2020-01-01, 1.2, 4.0
-            2021-01-01, 1.3, 4.1
-        "};
+            2021-01-01, 1.3, 4.1";
+        dbg!(TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str));
         let ts = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str).unwrap();
         assert_eq!(ts.len(), 2);
     }
@@ -880,27 +876,34 @@ mod test {
             DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2018, 6)).unwrap().duration(),
             0,
         );
-        if let Err(TSError::DateOrder(_, _)) = DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2017, 11)) {
+        if let Err(TSError::DateOrder(_, _)) = DateRange::new(
+            Monthly::ym(2018, 6),
+            Monthly::ym(2017, 11),
+        ) {
             assert!(true);
         } else { assert!(false) };
     }
 
     #[test]
     fn duration_should_convert_to_iterator() {
-        let mut iter = DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2019, 6)).unwrap().into_iter();
+        let mut iter = DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2019, 6))
+            .unwrap()
+            .into_iter();
         assert_eq!(iter.next(), Some(Monthly::ym(2018, 6)));
         assert_eq!(iter.next(), Some(Monthly::ym(2018,7)));
     }
 
-    // 
+    // === StringRecord functions =================================================================
+    
+    #[test]
+    fn should_get_string_from_stringrecord() {
 
-    // #[test]
-    // fn should_read_csv() {
-    //     let csv = "
-    //         2018-06-01, 1.2
-    //         2018-07-01, 1.3";
-    //     let ts = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str).unwrap();
-    //     assert_eq!(ts.len(), 2);
-    // }
+        let rec = csv::StringRecord::from(vec!["2020-01-01", "1.2", "4.0"]);
+
+        assert_eq!(
+            StringRecord(rec).as_string(),
+            "2020-01-01,1.2,4.0"
+        )
+    }
 }
 

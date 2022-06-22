@@ -199,8 +199,8 @@ impl Value for DoubleF32 {
         if record.inner().len() != 2 { 
             return Err(len_mismatch_err(&record, 2))
         }
-        let field1 = record.inner().get(1).unwrap();
-        let field2 = record.inner().get(2).unwrap();
+        let field1 = record.inner().get(0).unwrap();
+        let field2 = record.inner().get(1).unwrap();
         let n1: f32 = field1.parse().map_err(|_| parse_field_err(field1))?;
         let n2: f32 = field2.parse().map_err(|_| parse_field_err(field2))?;
         Ok(DoubleF32(n1, n2))
