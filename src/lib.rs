@@ -149,6 +149,10 @@ pub enum TSError {
     #[error("Failed to read CSV field '{0}'.")]
     ParseField(String),
 
+    /// A general error for client usage.
+    #[error("{0}")]
+    Client(String),
+
     // === Other Errors ===========================================================================
     
     /// Error if parse error and debug data is available.
