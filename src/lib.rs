@@ -236,7 +236,7 @@ impl<D: Date> fmt::Display for Scale<D> {
 }
 
 impl<D: Date> Scale<D> {
-    fn inner(&self) -> isize {
+    pub fn inner(&self) -> isize {
         self.scale
     }
 
