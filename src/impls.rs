@@ -248,7 +248,7 @@ pub mod test {
 
     #[test]
     fn creating_daterange_from_monthly_dates_should_work() {
-        DateRange::new(Monthly::ym(2020, 1), Monthly::ym(2021, 1));
+        let _ = DateRange::new(Monthly::ym(2020, 1), Monthly::ym(2021, 1));
     }
 
     #[test]

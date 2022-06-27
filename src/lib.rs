@@ -703,7 +703,6 @@ mod test {
     use chrono::{Datelike, NaiveDate};
     use crate::*;
     use crate::impls::*;
-    use indoc::indoc;
 
     // === Date trait tests =======================================================================
 
@@ -723,16 +722,11 @@ mod test {
 
     #[test]
     fn check_contiguous_should_work() {
-        let csv_str = indoc! {"
+        let csv_str = r"
             2020-01-01, 1.2
             2020-02-01, 1.3
-            2020-03-01, 1.4
-        "};
+            2020-03-01, 1.4";
         let ts = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str).unwrap();
-        let range = DateRange::new(
-            Monthly::ym(2020,1),
-            Monthly::ym(2020,3),
-        ).unwrap();
         if let Ok(()) = ts.check_contiguous() { assert!(true) } else { assert!(false) }
     }
 
@@ -776,7 +770,6 @@ mod test {
         let csv_str = "
             2020-01-01, 1.2, 4.0
             2021-01-01, 1.3, 4.1";
-        dbg!(TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str));
         let ts = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str).unwrap();
         assert_eq!(ts.len(), 2);
     }
