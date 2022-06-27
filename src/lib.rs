@@ -34,6 +34,11 @@
 //! like
 //!
 //! ```
+//! # use std::fmt;
+//! # use std::error::Error;
+//! # use time_series::{check_data_len, read_field, StringRecord, Value};
+//! # type Result<T> = std::result::Result<T, Box<dyn Error + 'static>>;
+//!
 //! // A time series where each date is associated with a single `f32` of data.
 //! #[derive(Copy, Clone, Debug)]
 //! pub struct SingleF32(pub f32);
@@ -41,11 +46,8 @@
 //! impl Value for SingleF32 {
 //! 
 //!     fn from_csv_string(record: StringRecord) -> Result<Self> {
-//!         if record.inner().len() != 1 { 
-//!             return Err(len_mismatch_err(&record, 1))
-//!         }
-//!         let field = record.inner().get(0).unwrap();
-//!         let n: f32 = field.parse().map_err(|_| parse_field_err(field))?;
+//!         check_data_len(&record, 1)?;
+//!         let n: f32 = read_field(&record, 0)?;
 //!         Ok(SingleF32(n))
 //!     }
 //! 
@@ -66,138 +68,190 @@
 /// implementations.
 pub mod impls;
 
-use thiserror::Error;
 use csv::{Reader, ReaderBuilder, Trim};
 use serde::{Serialize};
-use std::{ cmp::{min, max, Ordering}, fmt::{Debug, Display, self} };
-use std::{ io::Read, iter::zip, marker::{Copy, PhantomData}, ops::{Add, Sub} };
+use std::error::Error;
+use std::{cmp::{min, max, Ordering}, fmt::{Debug, Display, self}};
+use std::{io::Read, iter::zip, marker::{Copy, PhantomData}, ops::{Add, Sub}};
+use std::{path::{Path, PathBuf}, str::FromStr};
 
-type Result<T> = std::result::Result<T, TSError>;
+type Result<T> = std::result::Result<T, Box<dyn Error + 'static>>;
 
-// // === Path Handling Helpers ======================================================================
-// 
-// fn path_to_string(path: &Path, _err_msg: &str) -> Result<String> {
-//     Ok(
-//         path.to_str()
-//             .ok_or(TSError::FilePath("Failed to read path.".to_owned()))?
-//             .to_string()
-//     )
-// }
-// 
-// fn osstr_to_string(os_str: &OsStr, err_msg: &str) -> Result<String> {
-//     Ok(
-//         os_str.to_str()
-//             .ok_or(TSError::FilePath("Failed to read path.".to_owned()))?
-//             .to_string()
-//     ) 
-// }
+// ---ContiguousError-------------------------------------------------------------------------------
+
+/// Data-values have inconsistent dates
+#[derive(Debug)]
+pub struct ContiguousError{ line_num_opt: Option<u64> }
+
+impl fmt::Display for ContiguousError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ContiguousError({:?})", self.line_num_opt)
+    }
+}
+
+impl Error for ContiguousError {}
+
+
+// ---CsvError--------------------------------------------------------------------------------------
+
+/// ?
+#[derive(Debug)]
+pub struct CsvError { data: String }
+
+impl fmt::Display for CsvError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CsvError({})", self.data)
+    }
+}
+
+impl Error for CsvError {}
+
+// ---PartsError------------------------------------------------------------------------------------
+
+/// Could not form a time-series from parts.
+#[derive(Debug)]
+pub struct PartsError;
+
+impl fmt::Display for PartsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "PartsError()")
+    }
+}
+
+impl Error for PartsError {}
+
+// ---IrregularError--------------------------------------------------------------------------------
+
+/// CSV lines at `line_num` has length `current_len` but previous length was `prev_len`.
+#[derive(Debug, PartialEq)]
+pub struct IrregularError { line_num_opt: Option<u64>, prev_len: usize, current_len: usize }
+
+impl fmt::Display for IrregularError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "IrregularError({:?}, {}, {})", self.line_num_opt, self.prev_len, self.current_len)
+    }
+}
+
+impl Error for IrregularError {}
+
+
+// ---DateOrderError--------------------------------------------------------------------------------
+
+/// `date1` was later than `date2`.
+#[derive(Debug)]
+pub struct DateOrderError { date1: String, date2: String }
+
+impl fmt::Display for DateOrderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "DateOrderError({}, {})", self.date1, self.date2)
+    }
+}
+
+impl Error for DateOrderError {}
+
+// ---FilePathError---------------------------------------------------------------------------------
+
+/// Could not find file at `path`.
+#[derive(Debug)]
+pub struct FilePathError { path: PathBuf }
+
+impl fmt::Display for FilePathError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FilePathError({})", self.path.display())
+    }
+}
+
+impl Error for FilePathError {}
+
+// ---EmptyError---------------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct EmptyError();
+
+impl fmt::Display for EmptyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "EmptyError()")
+    }
+}
+
+impl Error for EmptyError {}
+
+// ---ParseDateError--------------------------------------------------------------------------------
+
+/// An error that occurs if a date in CSV cannot be parsed. `ParseDateError(s, fmt)` where `s` is
+/// the date string and `fmt` is the formatting string.
+#[derive(Debug)]
+pub struct ParseDateError {s: String, fmt: String}
+
+impl fmt::Display for ParseDateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ParseDateError({}, {})", self.s, self.fmt)
+    }
+}
+
+impl Error for ParseDateError {}
+
+// ---ParseDataError--------------------------------------------------------------------------------
+//
+
+/// Data `field` at position `get` on `line_num` cannot be parsed.
+#[derive(Debug)]
+pub struct ParseDataError { line_num_opt: Option<u64>, s: String, get: usize }
+
+impl fmt::Display for ParseDataError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ParseDataError({:?}, {}, {})", self.line_num_opt, self.s, self.get)
+    }
+}
+
+impl Error for ParseDataError {}
+
+// ---DataLenError----------------------------------------------------------------------------------
+
+/// `DataLenError(line number, expected_len, found_len)`. Checked to see if length is
+/// `expected_len` but actually `found_len`.
+#[derive(Debug, PartialEq)]
+pub struct DataLenError { line_num_opt: Option<u64>, expected_len: usize, found_len: usize }
+
+impl fmt::Display for DataLenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "DataLenError({:?}, {}, {})", self.line_num_opt, self.expected_len, self.found_len)
+    }
+}
+
+impl Error for DataLenError {}
+
+// ---FieldError-------------------------------------------------------------------------------
+
+/// Tried to read a field that doesn't exist. `FieldError(len, get)` where `len` is the number
+/// of fields and `get` is the field requested.
+#[derive(Debug)]
+pub struct FieldError{ len: usize, get: usize }
+
+impl fmt::Display for FieldError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FieldError({}, {})", self.len, self.get)
+    }
+}
+
+impl Error for FieldError {}
 
 // === Helper functions for impls =============================================================================
 
-// // Given an error message, an optional position in csv string or file and an optional file path,
-// // return a full error message.
-// fn error_msg(msg: &str, record: &StringRecord, opt_path: Option<&str>) -> String {
-//     match (record.position(), opt_path) {
-//         (Some(pos), Some(path)) => format!("{} at line [{}] in file [{}]", msg, pos.line(), path),
-//         (Some(pos), None) => format!("{} at line [{}]", msg, pos.line()),
-//         (None, Some(path)) => format!("{} in file [{}]", msg, path),
-//         (None, None) => format!("{}", msg),
-//     }
+// /// Helper function for building `Date` impls.
+// pub fn parse_date_err(data_str: &str, fmt: &str) -> Box<dyn Error> {
+//     Box::new(ParseDateError(data_str.to_string(), fmt.to_string()))
 // }
-
-// pub fn parse_data_err(record: &StringRecord) -> TSError {
 // 
+// // /// Helper function for building `Date` impls. An error if there are the wrong number of data
+// // /// segment in a CSV record.
+// // pub fn len_mismatch_err(record: &StringRecord, expected_len: usize) -> Box<dyn Error> {
+// //     Box::new(LenError(record.as_string(), expected_len))
+// // }
 // 
+// pub fn parse_field_err(seg: &str) -> Box<dyn Error> {
+//     Box::new(ParseFieldError(seg.to_string()))
 // }
-
-/// Helper function for building `Date` impls.
-pub fn parse_date_err(data_str: &str, fmt: &str) -> TSError {
-    TSError::ParseDateFmt(data_str.to_string(), fmt.to_string())
-}
-
-/// Helper function for building `Date` impls. An error if there are the wrong number of data
-/// segment in a CSV record.
-pub fn len_mismatch_err(record: &StringRecord, expected_len: usize) -> TSError {
-    dbg!(&record);
-    dbg!(&record.as_string());
-    TSError::Len(record.as_string(), expected_len)
-}
-
-pub fn parse_field_err(seg: &str) -> TSError {
-    TSError::ParseField(seg.to_string())
-}
-
-#[derive(Debug, Error)]
-pub enum TSError {
-
-    // === Errors use in impls ====================================================================
-    
-    /// Error for if date does not parse. The first argument is the date that has been read from
-    /// the csv string, the second argument is the format string.
-    #[error("Failed to parse date '{0}' using fmt '{1}'.")]
-    ParseDateFmt(String, String),
-
-    /// Error for if csv crate responds with error on reading a CSV line.
-    #[error("Failed to read CSV line.")]
-    ParseCSVLine,
-
-    /// Error for when there is a mismatch in number of csv fields.
-    #[error("Expected {1} field(s) but found '{0}'.")]
-    Len(String, usize),
-
-    /// Error for when a segment failes to parse.
-    #[error("Failed to read CSV field '{0}'.")]
-    ParseField(String),
-
-    /// A general error for client usage.
-    #[error("{0}")]
-    Client(String),
-
-    // === Other Errors ===========================================================================
-    
-    /// Error if parse error and debug data is available.
-    #[error("{0}")]
-    Csv(String),
-
-    /// Error for if dates are in the wrong order.
-    #[error("Start date {0} is later than end date {1}")]
-    DateOrder(String, String),
-
-    /// Error for if time-series does not have at least one element.
-    #[error("TimeSeries must have at least one element.")]
-    Empty,
-
-    /// File not found.
-    #[error("{0}")]
-    FilePath(String),
-
-    /// Error for when dates do not have regular intervals.
-    #[error("Non-contiguity between lines {0} and {1}")]
-    Irregular(usize, usize),
-
-    /// Error for if value does not parse.
-    #[error("{0}")]
-    ParseValue(String),
-
-    /// Error for when reconstructing time-series from parts. 
-    #[error("The range of dates and the length of the data do not agree.")]
-    Parts,
-}
-
-/// A helper for client code to build error messages that may contain a position in the csv file
-/// and its file path. For example,
-pub fn ts_error(msg: &str, record: Option<&StringRecord>, path: Option<&str>) -> TSError {
-    let pos = record.map(|record| record.position()).flatten();
-
-    TSError::Csv(
-        match (pos, path) {
-            (Some(pos), Some(path)) => format!("{} at line '{}' from '{}'", msg, pos.line(), path),
-            (Some(pos), None) => format!("{} at line '{}'", msg, pos.line()),
-            (None, Some(path)) => format!("{} from '{}'", msg, path),
-            (None, None) => msg.to_owned(),
-        }
-    )
-}
 
 // === Date trait =================================================================================
 
@@ -344,10 +398,8 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
     // Having an inner function allows from_csv() to read either from a file of from a string, or
     // to build a customized csv reader. The `opt_path_str` argument contains the file name if it
     // exists, for error messages.
-    fn from_csv_inner<R: Read>(
-        mut rdr: Reader<R>,
-        opt_path: Option<&str>) -> Result<Self> 
-    {
+    fn from_csv_inner<R: Read>(mut rdr: Reader<R>) -> Result<Self> {
+
         let mut acc: Vec<DateValue<D, V>> = Vec::new();
 
         let mut field_count: &mut Option<usize> = &mut None; 
@@ -355,46 +407,46 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
         // Iterate over lines of csv
         for res_record in rdr.records() {
 
-            let record = StringRecord(
-                res_record.map_err(|_| TSError::Csv("Failed to read CSV".to_owned()))?
-            );
+            let record = StringRecord(res_record?);
 
             check_field_count(&record, &mut field_count)?;
 
-            let date: D = date_from_record(&record, opt_path)?;
+            let date: D = date_from_record(&record)?;
             let values: V = data_from_record(&record)?;
 
             acc.push(DateValue::<D, V>::new(date, values));
         }
-        if acc.is_empty() { return Err(TSError::Empty) }
+        if acc.is_empty() { return Err(Box::new(EmptyError())) }
         Ok(TimeSeries(acc))
     }
 
     /// Create a new time-series from csv file. `date_fmt` specification can be found in the
     /// [chrono crate](https://docs.rs/chrono/latest/chrono/format/strftime/index.html#specifiers).
-    pub fn from_csv(path: &str) -> Result<Self> {
+    pub fn from_csv<P: AsRef<Path>>(p: P) -> Result<Self> {
+        let path: PathBuf = p.as_ref().to_path_buf();
 
         let rdr = ReaderBuilder::new()
             .has_headers(false)
             .trim(Trim::All)
-            .from_path(path)
-            .map_err(|_| TSError::FilePath(format!("Failed to read file at [{}]", &path)))?;
+            .from_path(path.clone())
+            .map_err(|_| Box::new(FilePathError { path }))?;
 
-        TimeSeries::<D, V>::from_csv_inner(rdr, Some(&path))
+        TimeSeries::<D, V>::from_csv_inner(rdr)
     }
 
     /// Create a new time-series from csv file. Usually it is sufficient to use the default
     /// `csv::Reader` but if you need to control the csv reader then you can pass in a
     /// configured `csv::ReaderBuilder`.
-    pub fn from_csv_with_builder(
-        path: &str,
+    pub fn from_csv_with_builder<P: AsRef<Path>>(
+        p: P,
         rdr_builder: ReaderBuilder) -> Result<Self>
     {
+        let path = p.as_ref().to_path_buf();
         let rdr = rdr_builder
-            .from_path(path)
-            .map_err(|_| TSError::FilePath(format!("Failed to read file at [{}]", &path)))?;
+            .from_path(path.clone())
+            .map_err(|_| Box::new(FilePathError { path }))?;
 
-        TimeSeries::<D, V>::from_csv_inner(rdr, Some(&path))
+        TimeSeries::<D, V>::from_csv_inner(rdr)
     }
 
     /// Create a new time-series from a string in csv format.
@@ -405,7 +457,7 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
             .trim(Trim::All)
             .from_reader(csv.as_bytes());
 
-        TimeSeries::<D, V>::from_csv_inner(rdr, None)
+        TimeSeries::<D, V>::from_csv_inner(rdr)
     }
 
     /// Create a new time-series from csv file. Usually it is sufficient to use the default
@@ -416,7 +468,7 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
         rdr_builder: ReaderBuilder) -> Result<Self> 
     {
         let rdr = rdr_builder.from_reader(csv.as_bytes());
-        TimeSeries::<D, V>::from_csv_inner(rdr, None)
+        TimeSeries::<D, V>::from_csv_inner(rdr)
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -429,7 +481,9 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
         match self.0.windows(2)
             .position(|window| window[0].date().to_scale() + 1 != window[1].date().to_scale())
         {
-            Some(pos) => Err(TSError::Irregular(pos + 1, pos + 2)),
+            Some(pos) => {
+                Err(Box::new(ContiguousError {line_num_opt: Some(pos as u64)}))
+            },
             None => Ok(()),
         }
     }
@@ -443,7 +497,7 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
 }
 
 impl<D: Date, V: Value> TryFrom<TimeSeries<D, V>> for RegularTimeSeries<D, V> {
-    type Error = TSError;
+    type Error = Box<dyn Error>; 
 
     fn try_from(ts: TimeSeries<D, V>) -> Result<RegularTimeSeries<D, V>> {
         ts.check_contiguous()?;
@@ -458,37 +512,11 @@ impl<D: Date, V: Value> TryFrom<TimeSeries<D, V>> for RegularTimeSeries<D, V> {
     }
 }
 
-// impl<D: Date, V: Value> TryFrom<TimeSeries<D, V>> for RegularTimeSeries<D, V> {
-//     type Error = TSError;
-// 
-//     fn try_from(value: TimeSeries<D, V>) -> Result<RegularTimeSeries<D, V>> {
-//         dbg!(&value);
-//         value.check_contiguous()?;
-//         std::process::exit(1);
-//         value.try_into()
-//     }
-// }
+// ===Helper functions=============================================================================
 
-// fn date_from_csv_error(record: &StringRecord, opt_path: Option<&str>) -> TSError {
-//     match (record.position(), opt_path) {
-//         (Some(pos), Some(path)) => {TSError::DateFromCSV(format!(
-//             "Failed to parse date at line [{}] in file [{}]", pos.line(), path,
-//         ))},
-//         (Some(pos), None) => {TSError::DateFromCSV(format!(
-//             "Failed to parse date at line [{}]", pos.line(),
-//         ))},
-//         (None, Some(path)) => {TSError::DateFromCSV(format!(
-//             "Failed to parse date in file [{}]", path,
-//         ))},
-//         (None, None) => {TSError::DateFromCSV("Failed to parse date".to_owned())},
-//     }
-// }
-
-fn date_from_record<D: Date>(record: &StringRecord, _opt_path: Option<&str>) -> Result<D> {
-    let line = record.position().map(|pos| format!("{}", pos.line())).unwrap_or("?".to_owned());
-    let date_str = record.get(0)
-        .ok_or(TSError::Csv(format!("Empty record on line [{}]", line)))?;
-    <D as Date>::parse_from_str(date_str)
+fn date_from_record<D: Date>(record: &StringRecord) -> Result<D> {
+    let date_str = record.get(0)?;
+    <D as Date>::parse_from_str(&date_str)
 }
 
 fn data_from_record<V: Value>(record: &StringRecord) -> Result<V> {
@@ -502,8 +530,14 @@ fn check_field_count<'a>(
     previous_len: &'a mut Option<usize>) -> Result<()>
 {
     match previous_len {
-        Some(prev) => {match prev != &mut record.len() {
-            true => Err(record_err(&record, *prev)),
+        Some(prev_len) => {match prev_len != &mut record.len() {
+            true => {
+                Err(Box::new(IrregularError{
+                    line_num_opt: record.line_num_opt(),
+                    prev_len: *prev_len,
+                    current_len: record.len(),
+                }))
+            }
             false => Ok(()),
         }},
         None => {
@@ -512,23 +546,6 @@ fn check_field_count<'a>(
         },
     }
 }
-
-// Return an error message.
-fn record_err(record: &StringRecord, previous: usize) -> TSError {
-    match record.position() {
-        Some(pos) => {TSError::Csv(format!(
-            "Record at line {} has length {} but previous field has length {}.",
-            pos.line(),
-            previous,
-            record.len()
-        ))},
-        None => {TSError::Csv(format!(
-            "Record has length {} but previous field has length {}.", previous, record.len()
-        ))},
-    }
-}
-
-
 
 // === TimeSeriesIter ======================================================================
 
@@ -614,7 +631,9 @@ impl<D: Date, V: Value> RegularTimeSeries<D, V> {
 
     /// Build a `RegularTimeSeries` from a range of dates and data.
     pub fn from_parts(range: DateRange<D>, data: Vec<V>) -> Result<Self> {
-        if range.duration() + 1 != data.len() as isize { return Err(TSError::Parts) }
+        if range.duration() + 1 != data.len() as isize {
+            return Err(Box::new(PartsError))
+        }
         range.into_iter()
             .zip(data.iter())
             .map(|(date, &data)| DateValue::new(date, data))
@@ -692,7 +711,9 @@ impl<D: Date> DateRange<D> {
     pub fn new(start_date: D, end_date: D) -> Result<Self> {
         let start = start_date.to_scale();
         let end = end_date.to_scale();
-        if start > end { return Err(TSError::DateOrder(start.to_string(), end.to_string())) }
+        if start > end { return Err(
+            Box::new(DateOrderError { date1: start.to_string(), date2: end.to_string()})
+        )}
         Ok(DateRange { start, end })
     }
 
@@ -763,8 +784,24 @@ impl StringRecord {
         &self.0
     }
 
-    fn get(&self, i: usize) -> Option<&str> {
-        self.0.get(i)
+    fn get(&self, i: usize) -> Result<String> {
+        match self.0.get(i) {
+            Some(s) => Ok(s.to_owned()),
+            None => Err(Box::new(FieldError { len: self.len(), get: i }).into()),
+        }
+    }
+
+    fn parse<T: FromStr>(&self, i: usize) -> Result<T> {
+        match self.0.get(i) {
+            Some(field) => {
+                field.parse().map_err(|_| ParseDataError {
+                    line_num_opt: self.line_num_opt(),
+                    s: field.to_owned(),
+                    get: i,
+                }.into())
+            },
+            None => { return Err(Box::new(FieldError { len: self.len(), get: i }).into()) }
+        }
     }
 
     fn iter(&self) -> StringRecordIter {
@@ -779,6 +816,10 @@ impl StringRecord {
 
     fn position(&self) -> Option<&csv::Position> {
         self.0.position()
+    }
+
+    fn line_num_opt(&self) -> Option<u64> {
+        self.position().map(|pos| pos.line())
     }
 }
 
@@ -804,6 +845,31 @@ impl<'r> Iterator for StringRecordIter<'r> {
         self.0.next()
     }
 }
+
+// ===Helper functions=============================================================================
+
+// Check that there are `n` data elements. This does not include the initial date.
+pub fn check_data_len(record: &StringRecord, n: usize) -> Result<()> {
+    match record.len() != n {
+        true => {
+            return Err(Box::new(DataLenError {
+                line_num_opt: record.line_num_opt(),
+                expected_len: n,
+                found_len: record.len(),
+            }))
+        },
+        false => Ok(())
+    }
+}
+
+pub fn read_field<T: FromStr>(record: &StringRecord, i: usize) -> Result<T> {
+    let field = record.inner().get(i).ok_or(Box::new(FieldError { len: record.len(), get: i }))?;
+    field.parse().map_err(|_| {
+        Box::new(ParseDataError { line_num_opt: record.line_num_opt(), s: field.to_owned(), get: i }).into()
+    })
+}
+
+// ===Tests========================================================================================
 
 #[cfg(test)]
 mod test {
@@ -844,23 +910,10 @@ mod test {
     }
 
     #[test]
-    fn check_contiguous_should_fail_correctly() {
-        let csv_str = indoc! {"
-            2020-01-01, 1.2
-            2021-01-01, 1.3
-        "};
-        let ts = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str).unwrap();
-
-        if let Err(e) = ts.check_contiguous() {
-            assert_eq!(e.to_string(), "Non-contiguity between lines 1 and 2")
-        } else { assert!(false) }
-    }
-
-    #[test]
     fn from_csv_should_fail_when_wrong_length() {
         let csv_str = "2020-01-01, 1.2";
-        if let Err(e) = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str) {
-            assert_eq!(e.to_string(), "Expected 2 field(s) but found '1.2'.")
+        if let Err(err) = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str) {
+            assert_eq!(err.to_string(), "DataLenError(None, 2, 1)");
         } else { assert!(false) }
     }
 
@@ -868,7 +921,7 @@ mod test {
     fn timeseries_should_have_at_least_one_element() {
         let csv_str = "";
         if let Err(e) = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str) {
-            assert_eq!(e.to_string(), "TimeSeries must have at least one element.")
+            assert_eq!(e.to_string(), "EmptyError()")
         } else { assert!(false) }
     }
 
@@ -923,11 +976,12 @@ mod test {
             DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2018, 6)).unwrap().duration(),
             0,
         );
-        if let Err(TSError::DateOrder(_, _)) = DateRange::new(
+
+        if let Err(err) = DateRange::new(
             Monthly::ym(2018, 6),
             Monthly::ym(2017, 11),
         ) {
-            assert!(true);
+            assert_eq!(err.to_string(), "DateOrderError(2018-06-01, 2017-11-01)");
         } else { assert!(false) };
     }
 

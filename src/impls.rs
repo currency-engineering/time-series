@@ -4,15 +4,6 @@ use crate::*;
 use serde::{Serialize, Serializer};
 use std::{fmt, marker::{Copy, PhantomData}};
 
-
-// This is implemented by the concrete type 
-//     /// Parse a `Date` from a string, given a format string.
-//     fn parse_from_str(fmt: &str, s: &str) -> Result<Self> {
-//         let nd = chrono::NaiveDate::parse_from_str(fmt, s)
-//             .map_err(|_| TSError::DateFromCSV(format!("Failed to parse date using fmt [{}]", fmt)))?;
-//         Ok(nd.into())
-//     }
-
 // === Shared Date Implementations ================================================================
 
 // --- Monthly ------------------------------------------------------------------------------------
@@ -78,7 +69,7 @@ impl Date for Monthly {
     fn parse_from_str(s: &str) -> Result<Self> {
         let fmt = "%Y-%m-%d";
         let nd = chrono::NaiveDate::parse_from_str(s, fmt)
-            .map_err(|_| parse_date_err(s, fmt))?;
+            .map_err(|_| ParseDateError { s: s.to_owned(), fmt: fmt.to_owned() })?;
         Ok(Monthly::ym(nd.year() as isize, nd.month() as usize))
     }
 
@@ -174,11 +165,8 @@ pub struct SingleF32(pub f32);
 impl Value for SingleF32 {
 
     fn from_csv_string(record: StringRecord) -> Result<Self> {
-        if record.inner().len() != 1 { 
-            return Err(len_mismatch_err(&record, 1))
-        }
-        let field = record.inner().get(0).unwrap();
-        let n: f32 = field.parse().map_err(|_| parse_field_err(field))?;
+        check_data_len(&record, 1)?;
+        let n: f32 = read_field(&record, 0)?;
         Ok(SingleF32(n))
     }
 
@@ -202,13 +190,9 @@ pub struct DoubleF32(pub f32, pub f32);
 impl Value for DoubleF32 {
 
     fn from_csv_string(record: StringRecord) -> Result<Self> {
-        if record.inner().len() != 2 { 
-            return Err(len_mismatch_err(&record, 2))
-        }
-        let field1 = record.inner().get(0).unwrap();
-        let field2 = record.inner().get(1).unwrap();
-        let n1: f32 = field1.parse().map_err(|_| parse_field_err(field1))?;
-        let n2: f32 = field2.parse().map_err(|_| parse_field_err(field2))?;
+        check_data_len(&record, 2)?;
+        let n1: f32 = record.parse(0)?;
+        let n2: f32 = record.parse(1)?;
         Ok(DoubleF32(n1, n2))
     }
 
@@ -270,11 +254,8 @@ pub mod test {
     #[test]
     fn date_should_fail_with_error() {
         let csv = "2018-06-001, 1.2";
-        if let Err(e) = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv) {
-            assert_eq!(
-                e.to_string(),
-                "Failed to parse date '2018-06-001' using fmt '%Y-%m-%d'.",
-            )
+        if let Err(err) = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv) {
+            assert_eq!(err.to_string(), "ParseDateError(2018-06-001, %Y-%m-%d)");
         } else { assert!(false) }
     }
 }
