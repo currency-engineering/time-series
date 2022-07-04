@@ -1,8 +1,10 @@
-
-use chrono::{Datelike};
 use crate::*;
+use chrono::Datelike;
 use serde::{Serialize, Serializer};
-use std::{fmt, marker::{Copy, PhantomData}};
+use std::{
+    fmt,
+    marker::{Copy, PhantomData},
+};
 
 // === Shared Date Implementations ================================================================
 
@@ -68,8 +70,10 @@ impl Date for Monthly {
 
     fn parse_from_str(s: &str) -> Result<Self> {
         let fmt = "%Y-%m-%d";
-        let nd = chrono::NaiveDate::parse_from_str(s, fmt)
-            .map_err(|_| ParseDateError { s: s.to_owned(), fmt: fmt.to_owned() })?;
+        let nd = chrono::NaiveDate::parse_from_str(s, fmt).map_err(|_| ParseDateError {
+            s: s.to_owned(),
+            fmt: fmt.to_owned(),
+        })?;
         Ok(Monthly::ym(nd.year() as isize, nd.month() as usize))
     }
 
@@ -80,7 +84,6 @@ impl Date for Monthly {
 
 // Currently only checked for positive inner value.
 impl Monthly {
-
     /// Return the month of a date.
     pub fn month(&self) -> Month {
         match self.month {
@@ -102,10 +105,7 @@ impl Monthly {
 
     /// Create a monthly date from a year and month.
     pub fn ym(year: isize, month: usize) -> Self {
-        Monthly {
-            year,
-            month,
-        }
+        Monthly { year, month }
     }
 }
 
@@ -127,23 +127,23 @@ impl Serialize for Monthly {
 impl fmt::Debug for Monthly {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Monthly")
-         .field("year", &self.year)
-         .field("month", &(self.month))
-         .finish()
+            .field("year", &self.year)
+            .field("month", &(self.month))
+            .finish()
     }
 }
 
 // --- Quarterly ----------------------------------------------------------------------------------
 
 // // === Quarterly ===
-// 
+//
 // trait FromScale<Scale<A>> for Scale<B>
 // where
 //     A: Date,
 //     B: Date,
 // {
 //     pub fn from_scale(i32) -> i32;
-// 
+//
 //     pub fn from(scale: Scale<A>) -> Self {
 //         Scale {
 //             scale: from(scale.inner()),
@@ -151,7 +151,7 @@ impl fmt::Debug for Monthly {
 //         }
 //     }
 // }
-// 
+//
 // impl FromScale<Scale<Quarterly>> for Scale<Monthly> {
 
 // === Shared Transform Implementations ===========================================================
@@ -163,7 +163,6 @@ impl fmt::Debug for Monthly {
 pub struct SingleF32(pub f32);
 
 impl Value for SingleF32 {
-
     fn from_csv_string(record: StringRecord) -> Result<Self> {
         check_data_len(&record, 1)?;
         let n: f32 = read_field(&record, 0)?;
@@ -188,7 +187,6 @@ impl fmt::Display for SingleF32 {
 pub struct DoubleF32(pub f32, pub f32);
 
 impl Value for DoubleF32 {
-
     fn from_csv_string(record: StringRecord) -> Result<Self> {
         check_data_len(&record, 2)?;
         let n1: f32 = record.parse(0)?;
@@ -206,15 +204,14 @@ impl fmt::Display for DoubleF32 {
         write!(f, "DoubleF32({}, {})", self.0, self.1)
     }
 }
-    
+
 // === Transforms =================================================================================
 
-    // let ts = TimeSeries::from_csv
+// let ts = TimeSeries::from_csv
 
-
-    // let ts = TimeSeries::<MonthlyDate, 1>::from_csv("./tests/test.csv", "%Y-%m-%d") {
-    // 
-    // let rts = ts.into_regular(None, None).unwrap();
+// let ts = TimeSeries::<MonthlyDate, 1>::from_csv("./tests/test.csv", "%Y-%m-%d") {
+//
+// let rts = ts.into_regular(None, None).unwrap();
 
 // Zip one-to-one
 //
@@ -229,8 +226,8 @@ impl fmt::Display for DoubleF32 {
 //     const N2: usize,
 //     const N3: usize,
 // {
-// 
-// 
+//
+//
 //     let iter1 = rts.iter();
 //     let iter2 = rts.iter();
 // }
@@ -241,9 +238,8 @@ impl fmt::Display for DoubleF32 {
 pub mod test {
 
     use crate::{
-        DateRange,
         impls::{DoubleF32, Monthly},
-        TimeSeries,
+        DateRange, TimeSeries,
     };
 
     #[test]
@@ -256,6 +252,8 @@ pub mod test {
         let csv = "2018-06-001, 1.2";
         if let Err(err) = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv) {
             assert_eq!(err.to_string(), "ParseDateError(2018-06-001, %Y-%m-%d)");
-        } else { assert!(false) }
+        } else {
+            assert!(false)
+        }
     }
 }

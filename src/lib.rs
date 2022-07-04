@@ -42,27 +42,27 @@
 //! // A time series where each date is associated with a single `f32` of data.
 //! #[derive(Copy, Clone, Debug)]
 //! pub struct SingleF32(pub f32);
-//! 
+//!
 //! impl Value for SingleF32 {
-//! 
+//!
 //!     fn from_csv_string(record: StringRecord) -> Result<Self> {
 //!         check_data_len(&record, 1)?;
 //!         let n: f32 = read_field(&record, 0)?;
 //!         Ok(SingleF32(n))
 //!     }
-//! 
+//!
 //!     fn to_csv_string(&self) -> String {
 //!         format!("{}", self.0)
 //!     }
 //! }
-//! 
+//!
 //! impl fmt::Display for SingleF32 {
 //!     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 //!         write!(f, "SingleF32({})", self.0)
 //!     }
 //! }
 //! ```
-//! 
+//!
 
 pub mod errors;
 
@@ -72,11 +72,22 @@ pub mod impls;
 
 use crate::errors::*;
 use csv::{Reader, ReaderBuilder, Trim};
-use serde::{Serialize};
+use serde::Serialize;
 use std::error::Error;
-use std::{cmp::{min, max, Ordering}, fmt::{Debug, Display, self}};
-use std::{io::Read, iter::zip, marker::{Copy, PhantomData}, ops::{Add, Sub}};
-use std::{path::{Path, PathBuf}, str::FromStr};
+use std::{
+    cmp::{max, min, Ordering},
+    fmt::{self, Debug, Display},
+};
+use std::{
+    io::Read,
+    iter::zip,
+    marker::{Copy, PhantomData},
+    ops::{Add, Sub},
+};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 type Result<T> = std::result::Result<T, Box<dyn Error + 'static>>;
 
@@ -97,7 +108,7 @@ where
 
     fn parse_from_str(s: &str) -> Result<Self>;
 
-    fn to_string(&self) -> String; 
+    fn to_string(&self) -> String;
 }
 
 // === Scale ======================================================================================
@@ -127,7 +138,6 @@ impl<D: Date> Scale<D> {
     pub fn inner(&self) -> isize {
         self.scale
     }
-
 
     fn to_date(&self) -> D {
         Date::from_scale(*self)
@@ -169,7 +179,9 @@ impl<D: Date> Ord for Scale<D> {
 }
 
 impl<D: Date> PartialEq for Scale<D> {
-    fn eq(&self, other: &Self) -> bool { self.scale == other.scale }
+    fn eq(&self, other: &Self) -> bool {
+        self.scale == other.scale
+    }
 }
 
 impl<D: Date> Eq for Scale<D> {}
@@ -178,7 +190,6 @@ impl<D: Date> Eq for Scale<D> {}
 
 /// A `Value` can be anything that can be read from a `csv::StringRecord`.
 pub trait Value: Debug + Display + Copy {
-
     fn from_csv_string(record: StringRecord) -> Result<Self>
     where
         Self: Sized;
@@ -196,10 +207,9 @@ pub struct DateValue<D: Date, V: Value> {
 }
 
 impl<D: Date, V: Value> DateValue<D, V> {
-
     /// Create a new datepoint.
     pub fn new(date: D, data: V) -> DateValue<D, V> {
-        DateValue {date, data}
+        DateValue { date, data }
     }
 
     /// Return the date of a `DateValue`.
@@ -221,19 +231,16 @@ impl<D: Date, V: Value> DateValue<D, V> {
 pub struct TimeSeries<D: Date, V: Value>(Vec<DateValue<D, V>>);
 
 impl<D: Date, V: Value> TimeSeries<D, V> {
-
     // Having an inner function allows from_csv() to read either from a file of from a string, or
     // to build a customized csv reader. The `opt_path_str` argument contains the file name if it
     // exists, for error messages.
     fn from_csv_inner<R: Read>(mut rdr: Reader<R>) -> Result<Self> {
-
         let mut acc: Vec<DateValue<D, V>> = Vec::new();
 
-        let mut field_count: &mut Option<usize> = &mut None; 
+        let mut field_count: &mut Option<usize> = &mut None;
 
         // Iterate over lines of csv
         for res_record in rdr.records() {
-
             let record = StringRecord(res_record?);
 
             check_field_count(&record, &mut field_count)?;
@@ -243,7 +250,9 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
 
             acc.push(DateValue::<D, V>::new(date, values));
         }
-        if acc.is_empty() { return Err(Box::new(EmptyError())) }
+        if acc.is_empty() {
+            return Err(Box::new(EmptyError()));
+        }
         Ok(TimeSeries(acc))
     }
 
@@ -264,10 +273,7 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
     /// Create a new time-series from csv file. Usually it is sufficient to use the default
     /// `csv::Reader` but if you need to control the csv reader then you can pass in a
     /// configured `csv::ReaderBuilder`.
-    pub fn from_csv_with_builder<P: AsRef<Path>>(
-        p: P,
-        rdr_builder: ReaderBuilder) -> Result<Self>
-    {
+    pub fn from_csv_with_builder<P: AsRef<Path>>(p: P, rdr_builder: ReaderBuilder) -> Result<Self> {
         let path = p.as_ref().to_path_buf();
         let rdr = rdr_builder
             .from_path(path.clone())
@@ -278,7 +284,6 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
 
     /// Create a new time-series from a string in csv format.
     pub fn from_csv_str(csv: &str) -> Result<Self> {
-
         let rdr = ReaderBuilder::new()
             .has_headers(false)
             .trim(Trim::All)
@@ -290,10 +295,7 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
     /// Create a new time-series from csv file. Usually it is sufficient to use the default
     /// `csv::Reader` but if more control is required over the CSV reader, then a custom
     /// `csv::ReaderBuilder` can be used as an argument.
-    pub fn from_csv_str_with_builder(
-        csv: &str,
-        rdr_builder: ReaderBuilder) -> Result<Self> 
-    {
+    pub fn from_csv_str_with_builder(csv: &str, rdr_builder: ReaderBuilder) -> Result<Self> {
         let rdr = rdr_builder.from_reader(csv.as_bytes());
         TimeSeries::<D, V>::from_csv_inner(rdr)
     }
@@ -304,13 +306,14 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
 
     // Fails if dates are not contiguous over the range.
     pub fn check_contiguous(&self) -> Result<()> {
-
-        match self.0.windows(2)
+        match self
+            .0
+            .windows(2)
             .position(|window| window[0].date().to_scale() + 1 != window[1].date().to_scale())
         {
-            Some(pos) => {
-                Err(Box::new(ContiguousError {line_num_opt: Some(pos as u64)}))
-            },
+            Some(pos) => Err(Box::new(ContiguousError {
+                line_num_opt: Some(pos as u64),
+            })),
             None => Ok(()),
         }
     }
@@ -324,14 +327,11 @@ impl<D: Date, V: Value> TimeSeries<D, V> {
 }
 
 impl<D: Date, V: Value> TryFrom<TimeSeries<D, V>> for RegularTimeSeries<D, V> {
-    type Error = Box<dyn Error>; 
+    type Error = Box<dyn Error>;
 
     fn try_from(ts: TimeSeries<D, V>) -> Result<RegularTimeSeries<D, V>> {
         ts.check_contiguous()?;
-        let dr = DateRange::new(
-            ts.0.first().unwrap().date(),
-            ts.0.last().unwrap().date(),
-        )?;
+        let dr = DateRange::new(ts.0.first().unwrap().date(), ts.0.last().unwrap().date())?;
         Ok(RegularTimeSeries {
             range: dr,
             values: ts.iter().map(|dv| dv.value()).collect(),
@@ -352,25 +352,20 @@ fn data_from_record<V: Value>(record: &StringRecord) -> Result<V> {
 }
 
 // Check that the field count does not change while iterating over records else return an error.
-fn check_field_count<'a>(
-    record: &StringRecord,
-    previous_len: &'a mut Option<usize>) -> Result<()>
-{
+fn check_field_count<'a>(record: &StringRecord, previous_len: &'a mut Option<usize>) -> Result<()> {
     match previous_len {
-        Some(prev_len) => {match prev_len != &mut record.len() {
-            true => {
-                Err(Box::new(IrregularError{
-                    line_num_opt: record.line_num_opt(),
-                    prev_len: *prev_len,
-                    current_len: record.len(),
-                }))
-            }
+        Some(prev_len) => match prev_len != &mut record.len() {
+            true => Err(Box::new(IrregularError {
+                line_num_opt: record.line_num_opt(),
+                prev_len: *prev_len,
+                current_len: record.len(),
+            })),
             false => Ok(()),
-        }},
+        },
         None => {
             *previous_len = Some(record.len());
             Ok(())
-        },
+        }
     }
 }
 
@@ -378,8 +373,7 @@ fn check_field_count<'a>(
 
 /// An iterator over a `TimeSeries`.
 #[derive(Debug)]
-pub struct TimeSeriesIter<'a, D: Date, V: Value>
-{
+pub struct TimeSeriesIter<'a, D: Date, V: Value> {
     data: &'a TimeSeries<D, V>,
     count: usize,
 }
@@ -392,7 +386,7 @@ impl<'a, D: Date, V: Value> Iterator for TimeSeriesIter<'a, D, V> {
             true => {
                 self.count += 1;
                 Some(self.data.0[self.count - 1])
-            },
+            }
             false => None,
         }
     }
@@ -420,7 +414,7 @@ impl<D: Date, V: Value> RegularTimeSeries<D, V> {
         RegularTimeSeriesIter {
             inner_iter: self.range.into_iter(),
             values: &self.values,
-        } 
+        }
     }
 
     // pub fn into_csv(&self) -> String {
@@ -440,7 +434,7 @@ impl<D: Date, V: Value> RegularTimeSeries<D, V> {
     //     let offset2: usize = (other.range.start.inner() - date_range.start.inner())
     //         .try_into().unwrap();
     //     ZipIter {
-    //         inner_iter: date_range.into_iter(), 
+    //         inner_iter: date_range.into_iter(),
     //         offset1,
     //         offset2,
     //         date_points1: &self.0,
@@ -451,17 +445,16 @@ impl<D: Date, V: Value> RegularTimeSeries<D, V> {
     /// Breaks `Self` into raw components. This is useful when building a new `RegularTimeSeries`
     /// with a different scale.
     pub fn into_parts<'a>(self) -> (DateRange<D>, Vec<V>) {
-    (
-        self.range(),
-        self.iter().map(|dp| dp.value()).collect(),
-    )}
+        (self.range(), self.iter().map(|dp| dp.value()).collect())
+    }
 
     /// Build a `RegularTimeSeries` from a range of dates and data.
     pub fn from_parts(range: DateRange<D>, data: Vec<V>) -> Result<Self> {
         if range.duration() + 1 != data.len() as isize {
-            return Err(Box::new(PartsError))
+            return Err(Box::new(PartsError));
         }
-        range.into_iter()
+        range
+            .into_iter()
             .zip(data.iter())
             .map(|(date, &data)| DateValue::new(date, data))
             .collect::<TimeSeries<D, V>>()
@@ -469,11 +462,10 @@ impl<D: Date, V: Value> RegularTimeSeries<D, V> {
     }
 }
 
-impl<D: Date, V: Value> FromIterator<DateValue<D, V>> for TimeSeries<D, V>
-{
+impl<D: Date, V: Value> FromIterator<DateValue<D, V>> for TimeSeries<D, V> {
     fn from_iter<T>(iter: T) -> Self
     where
-        T: IntoIterator<Item = DateValue<D, V>>
+        T: IntoIterator<Item = DateValue<D, V>>,
     {
         Self(iter.into_iter().collect())
     }
@@ -483,8 +475,7 @@ impl<D: Date, V: Value> FromIterator<DateValue<D, V>> for TimeSeries<D, V>
 
 /// An iterator over a `RegularTimeSeries`.
 #[derive(Debug)]
-pub struct RegularTimeSeriesIter<'a, D: Date, V: Value>
-{
+pub struct RegularTimeSeriesIter<'a, D: Date, V: Value> {
     inner_iter: DateRangeIter<D>,
     values: &'a Vec<V>,
 }
@@ -518,7 +509,10 @@ impl<'a, 'b, D: Date, V1: Value, V2: Value> Iterator for ZipIter<'a, 'b, D, V1, 
 
     fn next(&mut self) -> Option<Self::Item> {
         match (&mut self.inner_iter).enumerate().next() {
-            Some(i) => Some((self.date_points1[i.0 + self.offset1], self.date_points2[i.0 + self.offset2])),
+            Some(i) => Some((
+                self.date_points1[i.0 + self.offset1],
+                self.date_points2[i.0 + self.offset2],
+            )),
             None => None,
         }
     }
@@ -528,19 +522,21 @@ impl<'a, 'b, D: Date, V1: Value, V2: Value> Iterator for ZipIter<'a, 'b, D, V1, 
 
 /// An iterable range of dates.
 #[derive(Clone, Copy, Debug, Serialize)]
-pub struct DateRange<D: Date>{
+pub struct DateRange<D: Date> {
     start: Scale<D>,
-    end: Scale<D>
+    end: Scale<D>,
 }
 
 impl<D: Date> DateRange<D> {
-
     pub fn new(start_date: D, end_date: D) -> Result<Self> {
         let start = start_date.to_scale();
         let end = end_date.to_scale();
-        if start > end { return Err(
-            Box::new(DateOrderError { date1: start.to_string(), date2: end.to_string()})
-        )}
+        if start > end {
+            return Err(Box::new(DateOrderError {
+                date1: start.to_string(),
+                date2: end.to_string(),
+            }));
+        }
         Ok(DateRange { start, end })
     }
 
@@ -552,7 +548,7 @@ impl<D: Date> DateRange<D> {
     pub fn intersection(&self, other: &DateRange<D>) -> DateRange<D> {
         let start = max(self.start, other.start);
         let end = min(self.end, other.end);
-        DateRange { start, end } 
+        DateRange { start, end }
     }
 }
 
@@ -596,12 +592,11 @@ impl<D: Date> Iterator for DateRangeIter<D> {
 pub struct StringRecord(csv::StringRecord);
 
 impl StringRecord {
-
     pub fn as_string(&self) -> String {
         let mut csv_str = String::new();
         for segment in self.0.iter() {
-             csv_str.push_str(&segment);
-             csv_str.push(',' );
+            csv_str.push_str(&segment);
+            csv_str.push(',');
         }
         csv_str.pop();
         csv_str
@@ -614,27 +609,36 @@ impl StringRecord {
     fn get(&self, i: usize) -> Result<String> {
         match self.0.get(i) {
             Some(s) => Ok(s.to_owned()),
-            None => Err(Box::new(FieldError { len: self.len(), get: i }).into()),
+            None => Err(Box::new(FieldError {
+                len: self.len(),
+                get: i,
+            })
+            .into()),
         }
     }
 
     fn parse<T: FromStr>(&self, i: usize) -> Result<T> {
         match self.0.get(i) {
-            Some(field) => {
-                field.parse().map_err(|_| ParseDataError {
+            Some(field) => field.parse().map_err(|_| {
+                ParseDataError {
                     line_num_opt: self.line_num_opt(),
                     s: field.to_owned(),
                     get: i,
-                }.into())
-            },
-            None => { return Err(Box::new(FieldError { len: self.len(), get: i }).into()) }
+                }
+                .into()
+            }),
+            None => {
+                return Err(Box::new(FieldError {
+                    len: self.len(),
+                    get: i,
+                })
+                .into())
+            }
         }
     }
 
     fn iter(&self) -> StringRecordIter {
-        StringRecordIter(
-            self.0.iter()
-        )
+        StringRecordIter(self.0.iter())
     }
 
     fn len(&self) -> usize {
@@ -654,8 +658,8 @@ impl fmt::Display for StringRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut csv_str = String::new();
         for segment in self.0.iter() {
-             csv_str.push_str(&segment);
-             csv_str.push(',' );
+            csv_str.push_str(&segment);
+            csv_str.push(',');
         }
         csv_str.pop();
         write!(f, "{}", csv_str)
@@ -684,15 +688,23 @@ pub fn check_data_len(record: &StringRecord, n: usize) -> Result<()> {
                 expected_len: n,
                 found_len: record.len(),
             }))
-        },
-        false => Ok(())
+        }
+        false => Ok(()),
     }
 }
 
 pub fn read_field<T: FromStr>(record: &StringRecord, i: usize) -> Result<T> {
-    let field = record.inner().get(i).ok_or(Box::new(FieldError { len: record.len(), get: i }))?;
+    let field = record.inner().get(i).ok_or(Box::new(FieldError {
+        len: record.len(),
+        get: i,
+    }))?;
     field.parse().map_err(|_| {
-        Box::new(ParseDataError { line_num_opt: record.line_num_opt(), s: field.to_owned(), get: i }).into()
+        Box::new(ParseDataError {
+            line_num_opt: record.line_num_opt(),
+            s: field.to_owned(),
+            get: i,
+        })
+        .into()
     })
 }
 
@@ -700,9 +712,9 @@ pub fn read_field<T: FromStr>(record: &StringRecord, i: usize) -> Result<T> {
 
 #[cfg(test)]
 mod test {
-    use chrono::{Datelike, NaiveDate};
-    use crate::*;
     use crate::impls::*;
+    use crate::*;
+    use chrono::{Datelike, NaiveDate};
 
     // === Date trait tests =======================================================================
 
@@ -727,7 +739,11 @@ mod test {
             2020-02-01, 1.3
             2020-03-01, 1.4";
         let ts = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str).unwrap();
-        if let Ok(()) = ts.check_contiguous() { assert!(true) } else { assert!(false) }
+        if let Ok(()) = ts.check_contiguous() {
+            assert!(true)
+        } else {
+            assert!(false)
+        }
     }
 
     #[test]
@@ -735,7 +751,9 @@ mod test {
         let csv_str = "2020-01-01, 1.2";
         if let Err(err) = TimeSeries::<Monthly, DoubleF32>::from_csv_str(csv_str) {
             assert_eq!(err.to_string(), "DataLenError(None, 2, 1)");
-        } else { assert!(false) }
+        } else {
+            assert!(false)
+        }
     }
 
     #[test]
@@ -743,7 +761,9 @@ mod test {
         let csv_str = "";
         if let Err(e) = TimeSeries::<Monthly, SingleF32>::from_csv_str(csv_str) {
             assert_eq!(e.to_string(), "EmptyError()")
-        } else { assert!(false) }
+        } else {
+            assert!(false)
+        }
     }
 
     #[test]
@@ -756,7 +776,7 @@ mod test {
     // #[test]
     // fn building_timeseries_from_parts_should_work() {
     //     let date_range = DateRange::new(Monthly::ym(2021, 1), Monthly::ym(2021, 3)).unwrap();
-    //     let data = vec!(1.0, 1.1, 1.2); 
+    //     let data = vec!(1.0, 1.1, 1.2);
     //     let ts = RegularTimeSeries::<Monthly, 1>::from_parts(date_range, data).unwrap();
     //     if let Some(dp) = ts.iter().next() {
     //         assert_eq!(dp.date(), "2020")
@@ -789,20 +809,23 @@ mod test {
     #[test]
     fn duration_of_daterange_should_work() {
         assert_eq!(
-            DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2019, 6)).unwrap().duration(),
+            DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2019, 6))
+                .unwrap()
+                .duration(),
             12,
         );
         assert_eq!(
-            DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2018, 6)).unwrap().duration(),
+            DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2018, 6))
+                .unwrap()
+                .duration(),
             0,
         );
 
-        if let Err(err) = DateRange::new(
-            Monthly::ym(2018, 6),
-            Monthly::ym(2017, 11),
-        ) {
+        if let Err(err) = DateRange::new(Monthly::ym(2018, 6), Monthly::ym(2017, 11)) {
             assert_eq!(err.to_string(), "DateOrderError(2018-06-01, 2017-11-01)");
-        } else { assert!(false) };
+        } else {
+            assert!(false)
+        };
     }
 
     #[test]
@@ -811,20 +834,15 @@ mod test {
             .unwrap()
             .into_iter();
         assert_eq!(iter.next(), Some(Monthly::ym(2018, 6)));
-        assert_eq!(iter.next(), Some(Monthly::ym(2018,7)));
+        assert_eq!(iter.next(), Some(Monthly::ym(2018, 7)));
     }
 
     // === StringRecord functions =================================================================
-    
+
     #[test]
     fn should_get_string_from_stringrecord() {
-
         let rec = csv::StringRecord::from(vec!["2020-01-01", "1.2", "4.0"]);
 
-        assert_eq!(
-            StringRecord(rec).as_string(),
-            "2020-01-01,1.2,4.0"
-        )
+        assert_eq!(StringRecord(rec).as_string(), "2020-01-01,1.2,4.0")
     }
 }
-
